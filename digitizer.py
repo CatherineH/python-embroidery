@@ -11,7 +11,6 @@ from numpy import argmax
 from svgpathtools import svg2paths, Line, wsvg, Arc
 from sys import argv
 import csv
-from subprocess import check_output
 
 from brother import Pattern, Stitch, Block, BrotherEmbroideryFile
 
@@ -219,6 +218,9 @@ def svg_to_pattern(filecontents):
 
 
 def upload(pes_filename):
+    # since this library is sometimes used in web-environments, where subprocesses aren't
+    # allowed, move this import statement to only where it's actually used.
+    from subprocess import check_output
     mount_points = {}
     out = check_output(["df"]).split("\n")
     for line in out:

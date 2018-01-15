@@ -11,7 +11,7 @@ from numpy import argmax
 from svgpathtools import svg2paths, Line, wsvg, Arc
 from sys import argv
 import csv
-from subprocess import call, check_output
+from subprocess import check_output
 
 from brother import Pattern, Stitch, Block, BrotherEmbroideryFile
 

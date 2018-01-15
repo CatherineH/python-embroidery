@@ -1,14 +1,14 @@
 from os import statvfs, remove
 from os.path import join, abspath, basename, getsize, exists
 from shutil import copyfile
-from xml.etree import ElementTree
+from xml.dom.minidom import parse, parseString
 from time import time
 
 import re
 
 import svgwrite
 from numpy import argmax
-from svgpathtools import svg2paths, Line, wsvg, Arc
+from svgpathtools import svgdoc2paths, Line, wsvg, Arc
 from sys import argv
 import csv
 
@@ -35,7 +35,7 @@ def get_color(v, part="fill"):
 
 
 def svg_to_pattern(filecontents):
-    root = ElementTree.fromstring(filecontents)
+    doc = parseString(filecontents)
 
     def add_block(stitches):
         if last_color is not None:
@@ -45,16 +45,15 @@ def svg_to_pattern(filecontents):
     # make sure the document size is appropriate
     #assert root.attrib['width'] == '4in'
     #assert root.attrib['height'] == '4in'
-
-    paths, attributes = svg2paths(filename)
+    root = doc.getElementsByTagName('svg')[0]
+    viewbox = root.getAttribute('viewBox')
+    paths, attributes = svgdoc2paths(doc)
     # The maximum size is 4 inches
     size = 4.0 * 25.4
-    if 'viewBox' in root.attrib:
-        lims = [float(i) for i in root.attrib['viewBox'].split(" ")]
-
+    if viewbox:
+        lims = [float(i) for i in viewbox.split(" ")]
         width = abs(lims[0] - lims[2])
         height = abs(lims[1] - lims[3])
-
     else:
         # run through all the coordinates
         xs = []
@@ -261,7 +260,7 @@ def intersection_test():
 if __name__ == "__main__":
     start = time()
     filename = "circles.svg"#"ns_flag.svg"#"flowers.svg"
-    filecontents = open(filename, "r").read()
+    filecontents = open(join("workspace", filename), "r").read()
     pattern = svg_to_pattern(filecontents)
     end = time()
     print("digitizer time: %s" % (end-start))

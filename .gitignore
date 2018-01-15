@@ -1,1 +1,9 @@
 .idea
+
+# workspace is a directory to store all user-created patterns and svgs
+workspace
+
+__pycache__
+*.pyc
+debug.svg
+intersection_test.svg

@@ -3,6 +3,7 @@ from os.path import join, abspath, basename, getsize, exists
 from shutil import copyfile
 from xml.dom.minidom import parse, parseString
 from time import time
+import io
 
 import re
 
@@ -34,7 +35,7 @@ def get_color(v, part="fill"):
         return [0, 0, 0]
 
 
-def svg_to_pattern(filecontents):
+def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_test.svg'):
     doc = parseString(filecontents)
 
     def add_block(stitches):
@@ -81,7 +82,7 @@ def svg_to_pattern(filecontents):
 
     last_color = None
     stitches = []
-    dwg = svgwrite.Drawing('intersection_test.svg', profile='tiny')
+    dwg = svgwrite.Drawing(stitches_file, profile='tiny')
 
     def intersection_diffs(intersection):
         diffs = []
@@ -111,7 +112,7 @@ def svg_to_pattern(filecontents):
                 diffs = intersection_diffs(intersections)
                 if len([x for x in diffs if x < epsilon]) > 0:
                     debug_paths.append(line)
-                    wsvg(debug_paths, filename='debug.svg')
+                    wsvg(debug_paths, filename=debug)
                     raise ValueError("two intersections are the same!", line, path)
         for intersection in intersections:
             dwg.add(dwg.circle(center=(intersection.real, intersection.imag),
@@ -127,13 +128,15 @@ def svg_to_pattern(filecontents):
                 debug_paths.append(
                     Line(start=intersection - minimum_stitch + minimum_stitch*1j,
                          end=intersection + minimum_stitch - minimum_stitch*1j))
-            wsvg(debug_paths, filename='debug.svg')
+            wsvg(debug_paths, filename=debug)
             raise ValueError("only got one intersection!", line)
 
         dwg.add(svgwrite.shapes.Line(start=(intersections[0].real, intersections[0].imag),
                                      end=(intersections[1].real, intersections[1].imag),
                                      stroke=svg_fill, stroke_width=minimum_stitch * 0.1))
         lowest = argmax([i.imag for i in intersections])
+
+        dwg.save()
         return intersections[lowest]
 
     for k, v in enumerate(attributes):
@@ -165,8 +168,6 @@ def svg_to_pattern(filecontents):
                 last_stitch = find_intersections(line, v, k, paths)
             except ValueError:
                 break
-
-        dwg.save()
 
         # then do the stroke
         if stroke_color is None:
@@ -247,21 +248,14 @@ def upload(pes_filename):
             copyfile(pes_filename, join(mount_destination, basename(pes_filename)))
 
 
-def intersection_test():
-    line1 = Line(start=(128.57143 + 380.93364j), end=(300.00001 + 389.505069j))
-    line2 = Arc(start=(214.28572 + 598.07649j), radius=(85.714287 + 108.57143j), rotation=0.0,
-        large_arc=False, sweep=True, end=(128.57143 + 489.50507j))
-    intersections = line1.intersect(line2)
-    wsvg([line1, line2], filename="debug.svg")
-
-    print("intersections", intersections)
-
 
 if __name__ == "__main__":
     start = time()
     filename = "circles.svg"#"ns_flag.svg"#"flowers.svg"
     filecontents = open(join("workspace", filename), "r").read()
-    pattern = svg_to_pattern(filecontents)
+    debug_fh = open("debug.svg", "w")
+    stitches_fh = open("intersection_test.svg", "w")
+    pattern = svg_to_pattern(filecontents, debug_fh, stitches_fh)
     end = time()
     print("digitizer time: %s" % (end-start))
     print("pattern bounds", str(pattern.bounds))

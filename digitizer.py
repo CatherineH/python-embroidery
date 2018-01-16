@@ -136,7 +136,6 @@ def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_
                                      stroke=svg_fill, stroke_width=minimum_stitch * 0.1))
         lowest = argmax([i.imag for i in intersections])
 
-        dwg.save()
         return intersections[lowest]
 
     for k, v in enumerate(attributes):
@@ -206,6 +205,8 @@ def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_
                     pattern.blocks.append(block)
                 stitches.append(to)
         last_color = stroke_color
+
+    dwg.save()
     add_block(stitches)
     last_stitch = pattern.blocks[-1].stitches[-1]
     pattern.blocks.append(Block(stitches=[Stitch(["END"], last_stitch.xx, last_stitch.yy)],

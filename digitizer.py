@@ -6,10 +6,18 @@ from time import time
 import io
 
 import re
+from inspect import getsourcefile
+import webcolors
+
+
+css2_names_to_hex = webcolors.css2_names_to_hex
+from webcolors import hex_to_rgb
 
 import svgwrite
 from numpy import argmax
 from svgpathtools import svgdoc2paths, Line, wsvg, Arc
+from svgpathtools.svg2paths import ellipse2pathd
+
 from sys import argv
 import csv
 
@@ -21,10 +29,20 @@ def distance(point1, point2):
 
 
 def get_color(v, part="fill"):
+    if "style" not in v:
+        if part in v:
+            if v[part] in css2_names_to_hex:
+                return hex_to_rgb(css2_names_to_hex[v[part]])
+            elif v[part][0] == "#":
+                return hex_to_rgb(v[part])
+            else:
+                return [0, 0, 0]
+        else:
+            return [0, 0, 0]
     if v['style'].find(part+':') >= 0:
         color = v['style'].split(part+':')[1].split(";")[0]
         if color[0] == '#':
-            return [int(color[1:3], 16), int(color[3:5], 16), int(color[5:], 16)]
+            return hex_to_rgb(color)
         elif color == "none":
             return None
         else:
@@ -93,7 +111,17 @@ def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_
                 diffs.append(abs(intersection[i]-intersection[j]))
         return diffs
 
+    def safe_wsvg(paths, filename):
+        if not isinstance(filename, str):
+            if not filename.closed:
+                wsvg(paths, filename=filename)
+        else:
+            wsvg(paths, filename=filename)
+
     def find_intersections(line, v, k, paths):
+        if 'd' not in v:
+            if 'cx' in v:
+                v['d'] = ellipse2pathd(v)
         svg_fill = svgwrite.rgb(fill_color[0], fill_color[1], fill_color[2], '%')
         dwg.add(svgwrite.shapes.Line(start=(line.start.real, line.start.imag),
                                      end=(line.end.real, line.end.imag),
@@ -112,7 +140,7 @@ def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_
                 diffs = intersection_diffs(intersections)
                 if len([x for x in diffs if x < epsilon]) > 0:
                     debug_paths.append(line)
-                    wsvg(debug_paths, filename=debug)
+                    safe_wsvg(debug_paths, debug)
                     raise ValueError("two intersections are the same!", line, path)
         for intersection in intersections:
             dwg.add(dwg.circle(center=(intersection.real, intersection.imag),
@@ -128,7 +156,8 @@ def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_
                 debug_paths.append(
                     Line(start=intersection - minimum_stitch + minimum_stitch*1j,
                          end=intersection + minimum_stitch - minimum_stitch*1j))
-            wsvg(debug_paths, filename=debug)
+
+            safe_wsvg(debug_paths, debug)
             raise ValueError("only got one intersection!", line)
 
         dwg.add(svgwrite.shapes.Line(start=(intersections[0].real, intersections[0].imag),
@@ -206,7 +235,7 @@ def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_
                 stitches.append(to)
         last_color = stroke_color
 
-    dwg.save()
+    dwg.write(dwg.filename, pretty=False)
     add_block(stitches)
     last_stitch = pattern.blocks[-1].stitches[-1]
     pattern.blocks.append(Block(stitches=[Stitch(["END"], last_stitch.xx, last_stitch.yy)],

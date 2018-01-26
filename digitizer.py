@@ -16,7 +16,7 @@ from webcolors import hex_to_rgb
 import svgwrite
 from numpy import argmax
 from svgpathtools import svgdoc2paths, Line, wsvg, Arc
-from svgpathtools.svg2paths import ellipse2pathd
+from svgpathtools.svg2paths import ellipse2pathd, rect2pathd
 
 from sys import argv
 import csv
@@ -119,9 +119,6 @@ def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_
             wsvg(paths, filename=filename)
 
     def find_intersections(line, v, k, paths):
-        if 'd' not in v:
-            if 'cx' in v:
-                v['d'] = ellipse2pathd(v)
         svg_fill = svgwrite.rgb(fill_color[0], fill_color[1], fill_color[2], '%')
         dwg.add(svgwrite.shapes.Line(start=(line.start.real, line.start.imag),
                                      end=(line.end.real, line.end.imag),
@@ -130,6 +127,7 @@ def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_
         debug_paths = []
         for path in paths[k]:
             debug_paths.append(path)
+
             dwg.add(dwg.path(v['d'],
                              stroke=svgwrite.rgb(fill_color[0], fill_color[1],
                                                  fill_color[2], '%'), fill="none"))
@@ -167,19 +165,7 @@ def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_
 
         return intersections[lowest]
 
-    for k, v in enumerate(attributes):
-        # if k > 0:
-        #    continue
-        # first, look for the color from the fill
-        fill_color = get_color(v, "fill")
-        stroke_color = get_color(v, "stroke")
-
-        if len(pattern.blocks) == 0:
-            pattern.blocks.append(Block([Stitch(["JUMP"], 0, 0)], color=fill_color))
-
-        # first, do the fill - horizontal lines zigzagging from top to bottom
-        if last_color != stroke_color:
-            stitches = add_block(stitches)
+    def fill(paths, k, v):
         current_height = paths[k].bbox()[2]
         last_stitch = paths[k].bbox()[0]+ 1j*current_height
         while last_stitch.imag < paths[k].bbox()[3]:
@@ -196,6 +182,29 @@ def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_
                 last_stitch = find_intersections(line, v, k, paths)
             except ValueError:
                 break
+
+    for k, v in enumerate(attributes):
+        # first, look for the color from the fill
+        fill_color = get_color(v, "fill")
+        stroke_color = get_color(v, "stroke")
+
+        if len(pattern.blocks) == 0:
+            pattern.blocks.append(Block([Stitch(["JUMP"], 0, 0)], color=fill_color))
+
+        # first, do the fill - horizontal lines zigzagging from top to bottom
+        if last_color != stroke_color:
+            stitches = add_block(stitches)
+        if 'd' not in v:
+            if 'cx' in v:
+                v['d'] = ellipse2pathd(v)
+            elif 'x1' in v:
+                v['d'] = Line(start=float(v['x1'])+1j*float(v['y1']), end=float(v['x2'])+1j*float(v['y2']))
+            elif 'width' in v and 'x' in v:
+                v['d'] = rect2pathd(v)
+            else:
+                print("I'm not sure what to do with %s" % v)
+        if not isinstance(v['d'], Line):
+            fill(paths, k, v)
 
         # then do the stroke
         if stroke_color is None:

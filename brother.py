@@ -4,6 +4,10 @@ from os.path import basename, splitext
 
 from numpy import argmin
 
+import webcolors
+
+IntegerRGB = webcolors.IntegerRGB
+
 pecThreads = [[[0, 0, 0], "Unknown", ""],
               [[14, 31, 124], "Prussian Blue", ""],
               [[10, 85, 163], "Blue", ""],
@@ -179,8 +183,10 @@ class Pattern():
 
 def nearest_color(in_color):
     # if in_color is an int, assume that the nearest color has already been find
-    if not isinstance(in_color, list):
+    if isinstance(in_color, int):
         return in_color
+    if isinstance(in_color, IntegerRGB):
+        in_color = [in_color.red, in_color.green, in_color.blue]
     in_color = [float(p) for p in in_color]
     return argmin(
         [sum([(in_color[i] - color[0][i]) ** 2 for i in range(3)]) for color in pecThreads
@@ -203,6 +209,8 @@ class Block:
     def __init__(self, stitches=[], color=[0, 0, 0]):
         self.stitches = stitches
         self.color = nearest_color(color)
+        if not isinstance(self.color, int):
+            raise ValueError("block was instantiated with something that was not a color: %s %s" % (self.color, color))
 
     @property
     def stitch_type(self):
@@ -219,6 +227,9 @@ class Block:
         for stitch in self.stitches:
             output += str(stitch)
         return output
+
+    def __repr__(self):
+        return self.__str__()
 
 
 class BoundingBox:

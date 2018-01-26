@@ -16,12 +16,27 @@ from webcolors import hex_to_rgb
 import svgwrite
 from numpy import argmax
 from svgpathtools import svgdoc2paths, Line, wsvg, Arc
+from svgpathtools.parser import parse_path
 from svgpathtools.svg2paths import ellipse2pathd, rect2pathd
 
 from sys import argv
 import csv
 
 from brother import Pattern, Stitch, Block, BrotherEmbroideryFile
+
+
+def overall_bbox(paths):
+    over_bbox = [None, None, None, None]
+    for path in paths:
+        bbox = path.bbox()
+        for i in range(4):
+            if over_bbox[i] is None:
+                over_bbox[i] = bbox[i]
+        over_bbox[0] = min(over_bbox[0], bbox[0])
+        over_bbox[1] = max(over_bbox[1], bbox[1])
+        over_bbox[2] = min(over_bbox[2], bbox[2])
+        over_bbox[3] = max(over_bbox[3], bbox[3])
+    return over_bbox
 
 
 def distance(point1, point2):
@@ -66,7 +81,18 @@ def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_
     #assert root.attrib['height'] == '4in'
     root = doc.getElementsByTagName('svg')[0]
     viewbox = root.getAttribute('viewBox')
-    paths, attributes = svgdoc2paths(doc)
+    _, attributes = svgdoc2paths(doc)
+    # convert all objects to paths:
+    for k, v in enumerate(attributes):
+        if 'd' not in v:
+            if 'cx' in v:
+                attributes[k]['d'] = ellipse2pathd(v)
+            elif 'x1' in v:
+                attributes[k]['d'] = "M %s %s L %s %s" % (v['x1'], v['y1'], v['x2'], v['y2'])
+            elif 'width' in v and 'x' in v:
+                attributes[k]['d'] = rect2pathd(v)
+            else:
+                print("I'm not sure what to do with %s" % v)
     # The maximum size is 4 inches
     size = 4.0 * 25.4
     if viewbox:
@@ -75,17 +101,12 @@ def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_
         height = abs(lims[1] - lims[3])
     else:
         # run through all the coordinates
-        xs = []
-        ys = []
+        paths = []
         for k, v in enumerate(attributes):
-            for path in paths[k]:
-                bbox = path.bbox()
-                xs.append(bbox[0])
-                xs.append(bbox[1])
-                ys.append(bbox[2])
-                ys.append(bbox[3])
-        width = max(xs)-min(xs)
-        height = max(ys)-min(ys)
+            paths += parse_path(v['d'])
+        bbox = overall_bbox(paths)
+        width = bbox[1]-bbox[0]
+        height = bbox[3]-bbox[2]
 
     if width > height:
         scale = size / width
@@ -118,14 +139,15 @@ def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_
         else:
             wsvg(paths, filename=filename)
 
-    def find_intersections(line, v, k, paths):
+    def find_intersections(line, v):
         svg_fill = svgwrite.rgb(fill_color[0], fill_color[1], fill_color[2], '%')
         dwg.add(svgwrite.shapes.Line(start=(line.start.real, line.start.imag),
                                      end=(line.end.real, line.end.imag),
                                      stroke="black", stroke_width=minimum_stitch * 0.1))
+        paths = parse_path(v['d'])
         intersections = []
         debug_paths = []
-        for path in paths[k]:
+        for path in paths:
             debug_paths.append(path)
 
             dwg.add(dwg.path(v['d'],
@@ -133,20 +155,23 @@ def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_
                                                  fill_color[2], '%'), fill="none"))
             line_intersections = line.intersect(path)
             for line_intersection in line_intersections:
-                intersections.append(line.point(line_intersection[0]))
+                intersection_point = line.point(line_intersection[0])
                 epsilon = 1e-4
+                if intersection_point in intersections:
+                    continue
+                intersections.append(intersection_point)
                 diffs = intersection_diffs(intersections)
                 if len([x for x in diffs if x < epsilon]) > 0:
                     debug_paths.append(line)
                     safe_wsvg(debug_paths, debug)
-                    raise ValueError("two intersections are the same!", line, path)
+                    raise ValueError("two intersections are the same!", line, path, intersections)
         for intersection in intersections:
             dwg.add(dwg.circle(center=(intersection.real, intersection.imag),
                                r=minimum_stitch * 0.1))
 
         if len(intersections) < 2:
             debug_paths.append(line)
-            for path in paths[k]:
+            for path in paths:
                 debug_paths.append(path)
             for intersection in intersections:
                 debug_paths.append(Line(start=intersection+minimum_stitch+minimum_stitch*1j,
@@ -161,27 +186,40 @@ def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_
         dwg.add(svgwrite.shapes.Line(start=(intersections[0].real, intersections[0].imag),
                                      end=(intersections[1].real, intersections[1].imag),
                                      stroke=svg_fill, stroke_width=minimum_stitch * 0.1))
-        lowest = argmax([i.imag for i in intersections])
+        # grab the point furthest from the start
+        lowest = argmax([abs(i-line.start) for i in intersections])
 
         return intersections[lowest]
 
-    def fill(paths, k, v):
-        current_height = paths[k].bbox()[2]
-        last_stitch = paths[k].bbox()[0]+ 1j*current_height
-        while last_stitch.imag < paths[k].bbox()[3]:
+    def fill(v):
+        fudge_factor = 0.0 # this fudge factor is added to guarantee that the line goes
+        # slightly over the object
+        paths = parse_path(v['d'])
+        bbox = overall_bbox(paths)
+        if bbox[0] == bbox[1] or bbox[2] == bbox[3]:
+            return
+        current_height = bbox[2]
+        last_stitch = bbox[0]+ 1j*current_height
+        # left/right toggle
+        going_east = True
+        while last_stitch.imag < bbox[3]:
             angle = 0.05
-            line = Line(start=last_stitch,
-                        end=paths[k].bbox()[1] + 1j*(last_stitch.imag+(paths[k].bbox()[1]-last_stitch.real)*angle))
+            if going_east:
+                line = Line(start=last_stitch,
+                        end=bbox[1]*(1.0+fudge_factor) + 1j*(last_stitch.imag+(bbox[1]-last_stitch.real)*angle))
+            else:
+                line = Line(end=bbox[0] * (1.0 - fudge_factor) + 1j * (
+                last_stitch.imag + (bbox[1] - last_stitch.real) * angle),
+                            start=last_stitch)
+            if line.start == line.end:
+                raise ValueError("start is the same as end! last stitch is: %s " % last_stitch)
             try:
-                east_stitch = find_intersections(line, v, k, paths)
-            except ValueError:
+                last_stitch = find_intersections(line, v)
+            except ValueError as e:
+                print("got valueerror on last stitch: %s" %(e))
                 break
-            line = Line(end=paths[k].bbox()[0] + 1j * (east_stitch.imag +(paths[k].bbox()[1]-east_stitch.real)*angle),
-                        start=east_stitch)
-            try:
-                last_stitch = find_intersections(line, v, k, paths)
-            except ValueError:
-                break
+            going_east = not going_east
+
 
     for k, v in enumerate(attributes):
         # first, look for the color from the fill
@@ -194,24 +232,16 @@ def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_
         # first, do the fill - horizontal lines zigzagging from top to bottom
         if last_color != stroke_color:
             stitches = add_block(stitches)
-        if 'd' not in v:
-            if 'cx' in v:
-                v['d'] = ellipse2pathd(v)
-            elif 'x1' in v:
-                v['d'] = Line(start=float(v['x1'])+1j*float(v['y1']), end=float(v['x2'])+1j*float(v['y2']))
-            elif 'width' in v and 'x' in v:
-                v['d'] = rect2pathd(v)
-            else:
-                print("I'm not sure what to do with %s" % v)
-        if not isinstance(v['d'], Line):
-            fill(paths, k, v)
+        paths = parse_path(v['d'])
+        fill(v)
+
 
         # then do the stroke
         if stroke_color is None:
             continue
         if last_color != stroke_color:
             stitches = add_block(stitches)
-        for i, path in enumerate(paths[k]):
+        for i, path in enumerate(paths):
             if path.length() == 0:
                 continue
             if i > 0:

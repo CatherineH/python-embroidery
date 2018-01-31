@@ -4,10 +4,6 @@ from os.path import basename, splitext
 
 from numpy import argmin
 
-import webcolors
-
-IntegerRGB = webcolors.IntegerRGB
-
 pecThreads = [[[0, 0, 0], "Unknown", ""],
               [[14, 31, 124], "Prussian Blue", ""],
               [[10, 85, 163], "Blue", ""],
@@ -164,7 +160,7 @@ class Pattern():
 
     @property
     def bounds(self):
-        return calcBoundingBox(self.blocks)
+        return calc_bounding_box(self.blocks)
 
     @property
     def thread_count(self):
@@ -180,12 +176,22 @@ class Pattern():
         return [block.color for block in self.blocks
                 if "TRIM" in block.stitches[0].tags or "END" in block.stitches[0].tags]
 
+    def __str__(self):
+        output = ""
+        for i, block in enumerate(self.blocks):
+            output += "Block Number: %s, color %s, number of stitches: %s\n" % \
+                      (i, block.color, block.num_stitches)
+        return output
+
+    def __repr__(self):
+        return self.__str__()
+
 
 def nearest_color(in_color):
     # if in_color is an int, assume that the nearest color has already been find
     if isinstance(in_color, int):
         return in_color
-    if isinstance(in_color, IntegerRGB):
+    if "red" in dir(in_color):
         in_color = [in_color.red, in_color.green, in_color.blue]
     in_color = [float(p) for p in in_color]
     return argmin(
@@ -210,7 +216,9 @@ class Block:
         self.stitches = stitches
         self.color = nearest_color(color)
         if not isinstance(self.color, int):
-            raise ValueError("block was instantiated with something that was not a color: %s %s" % (self.color, color))
+            raise ValueError(
+                "block was instantiated with something that was not a color: %s %s" % (
+                    self.color, color))
 
     @property
     def stitch_type(self):
@@ -250,6 +258,9 @@ class BoundingBox:
     def __str__(self):
         return "width: %s, height: %s" % (self.width, self.height)
 
+    def __repr__(self):
+        return self.__str__()
+    
 
 def csv_to_pattern(filename):
     pattern = Pattern()
@@ -286,34 +297,39 @@ def csv_to_pattern(filename):
     return pattern
 
 
-def calcBoundingBox(blocks):
-    boundingRect = BoundingBox()
+def calc_bounding_box(blocks):
+    bounding_rect = BoundingBox()
     for block in blocks:
         stitches = block.stitches
         for stitch in stitches:
             if "TRIM" in stitch.tags:
                 continue
-            boundingRect.left = min(boundingRect.left, stitch.xx)
-            boundingRect.top = min(boundingRect.top, stitch.yy)
-            boundingRect.right = max(boundingRect.right, stitch.xx)
-            boundingRect.bottom = max(boundingRect.bottom, stitch.yy)
-    return boundingRect
+            bounding_rect.left = min(bounding_rect.left, stitch.xx)
+            bounding_rect.top = min(bounding_rect.top, stitch.yy)
+            bounding_rect.right = max(bounding_rect.right, stitch.xx)
+            bounding_rect.bottom = max(bounding_rect.bottom, stitch.yy)
+    return bounding_rect
 
 
 class BrotherEmbroideryFile():
-    def __init__(self, filename="output.pes"):
-        self.fh = open(filename, "wb")
+    def __init__(self, filename="output.pes", filehandle=None):
+        if filehandle is None:
+            self.fh = open(filename, "wb")
+        else:
+            self.fh = filehandle
         self.filename = filename
+
         self.verbose = False
+        self.output = ''
 
     def write_pattern(self, pattern):
-        self.write_int(0x00, width=4)
+        self.output += self.write_int(0x00, width=4)
 
         for _ in range(3):
-            self.write_int(0x01)
-        self.write_int(0xffff)
-        self.write_int(0x00)
-        self.write_int(0x07)
+            self.output += self.write_int(0x01)
+        self.output += self.write_int(0x00)
+        self.output += self.write_int(0x00)
+        self.output += self.write_int(0x07)
         self.c_emb_one(pattern)
         if self.verbose:
             for b in pattern.blocks:
@@ -321,28 +337,32 @@ class BrotherEmbroideryFile():
 
         self.c_sew_seg(pattern)
 
-        self.fh.write("#PES0001")
-        pecLocation = self.fh.tell()
-        self.fh.seek(0x08)
-        self.write_int(pecLocation, width=4)
-        self.fh.seek(0, 2)
+        self.output += "#PES0001"
+        pec_location = len(self.output)
+
+        self.output = self.output[:0x08] + self.write_int(pec_location,
+                                                          width=4) + self.output[
+                                                                     0x08 + 4:]
 
         self.write_pec_stitches(pattern)
+        self.fh.write(self.output)
         self.fh.close()
 
     def write_int(self, val, width=2, LE=True):
+        output = ''
         val = int(round(val))
         for i in range(width):
             offset = i * 8 if LE else (width - i - 1) * 8
-            self.fh.write(chr((val >> offset) & 0xFF))
+            output += chr((val >> offset) & 0xFF)
+        return output
 
     def write_float(self, val):
         for b in bytearray(struct.pack("f", val)):
-            self.fh.write(chr(b))
+            self.output += chr(b)
 
     def write_stitch(self, stitch, bounds):
-        self.write_int(stitch.xx - bounds.left)
-        self.write_int(stitch.yy + bounds.top)
+        self.output += self.write_int(stitch.xx - bounds.left)
+        self.output += self.write_int(stitch.yy + bounds.top)
 
     def write_image(self, image):
         for i in range(38):
@@ -351,7 +371,7 @@ class BrotherEmbroideryFile():
                 output = 0
                 for k in range(8):
                     output += (image[i][offset + k] != 0) << k
-                self.fh.write(chr(output))
+                self.output += chr(output)
 
     def encode_jump(self, x, tags):
         outputVal = abs(x) & 0x7FF
@@ -365,13 +385,13 @@ class BrotherEmbroideryFile():
         if x < 0:
             outputVal = x + 0x1000 & 0x7FF
             outputVal |= 0x800
-        self.fh.write(chr(((outputVal >> 8) & 0x0F) | orPart))
-        self.fh.write(chr(outputVal & 0xFF))
+        self.output += chr(((outputVal >> 8) & 0x0F) | orPart)
+        self.output += chr(outputVal & 0xFF)
 
     def c_emb_one(self, pattern):
-        self.fh.write("CEmbOne")
+        self.output += "CEmbOne"
         for _ in range(8):
-            self.write_int(0x00)
+            self.output += self.write_int(0x00)
         self.write_float(1.0)
         self.write_float(0.0)
         self.write_float(0.0)
@@ -380,80 +400,82 @@ class BrotherEmbroideryFile():
         hoopWidth = 1300
         self.write_float((pattern.bounds.width - hoopWidth) / 2.0)
         self.write_float((pattern.bounds.height + hoopHeight) / 2.0)
-        self.write_int(0x01)
-        self.write_int(0x00)
-        self.write_int(0x00)
-        self.write_int(pattern.bounds.width)
-        self.write_int(pattern.bounds.height)
+        self.output += self.write_int(0x01)
+        self.output += self.write_int(0x00)
+        self.output += self.write_int(0x00)
+        self.output += self.write_int(pattern.bounds.width)
+        self.output += self.write_int(pattern.bounds.height)
 
         for _ in range(8):
-            self.fh.write(chr(0))
+            self.output += chr(0)
 
     def c_sew_seg(self, pattern):
-        self.write_int(len(pattern.blocks))
-        self.write_int(0xFFFF)
-        self.write_int(0x00)
-        self.write_int(0x07)
-        self.fh.write("CSewSeg")
+        self.output += self.write_int(len(pattern.blocks))
+        self.output += self.write_int(0xFFFF)
+        self.output += self.write_int(0x00)
+        self.output += self.write_int(0x07)
+        self.output += "CSewSeg"
         colorInfo = []
 
         for i, block in enumerate(pattern.blocks):
-            self.write_int(block.stitch_type)
-            self.write_int(block.color)
+            self.output += self.write_int(block.stitch_type)
+            self.output += self.write_int(block.color)
             if block.color not in [c[1] for c in colorInfo]:
                 colorInfo.append([i, block.color])
-            self.write_int(block.num_stitches)
+                self.output += self.write_int(block.num_stitches)
             for stitch_i in range(0, len(block.stitches)):
                 self.write_stitch(block.stitches[stitch_i], pattern.bounds)
             if i < len(pattern.blocks) - 1:
-                self.write_int(0x8003)
-        self.write_int(len(colorInfo))
+                self.output += self.write_int(0x8003)
+            self.output += self.write_int(len(colorInfo))
         for i in range(len(colorInfo)):
-            self.write_int(colorInfo[i][0])
-            self.write_int(colorInfo[i][1])
+            self.output += self.write_int(colorInfo[i][0])
+            self.output += self.write_int(colorInfo[i][1])
 
-        self.write_int(0, width=4)
+        self.output += self.write_int(0, width=4)
 
     def write_pec_stitches(self, pattern):
-        self.fh.write("LA:")
+        self.output += "LA:"
         pes_name = splitext(basename(self.filename))[0]
         while len(pes_name) < 16:
             pes_name = pes_name + chr(0x20)
         pes_name = pes_name[0:16]
-        self.fh.write(pes_name)
-        self.fh.write(chr(0x0D))
-        for _ in range(12):
-            self.fh.write(chr(0x20))
-        self.fh.write(chr(0xFF))
-        self.fh.write(chr(0x00))
-        self.fh.write(chr(0x06))
-        self.fh.write(chr(0x26))
-        for _ in range(12):
-            self.fh.write(chr(0x20))
 
-        self.fh.write(chr(pattern.thread_count - 1))
+        print(self.filename, pes_name)
+        self.output += str(pes_name)
+        self.output += chr(0x0D)
+        for _ in range(12):
+            self.output += chr(0x20)
+        self.output += chr(0xFF)
+        self.output += chr(0x00)
+        self.output += chr(0x06)
+        self.output += chr(0x26)
+        for _ in range(12):
+            self.output += chr(0x20)
+
+        self.output += chr(pattern.thread_count - 1)
         for color in pattern.thread_colors:
-            self.fh.write(chr(color))
+            self.output += chr(color)
         for _ in range(0x1cf - pattern.thread_count):
-            self.fh.write(chr(0x20))
+            self.output += chr(0x20)
 
-        self.write_int(0x0)
+        self.output += self.write_int(0x0)
 
-        graphics_offset_location = self.fh.tell()
+        graphics_offset_location = len(self.output)
 
-        self.fh.write(chr(0x00))
-        self.fh.write(chr(0x00))
-        self.fh.write(chr(0x00))
-        self.fh.write(chr(0x31))
-        self.fh.write(chr(0xff))
-        self.fh.write(chr(0xf0))
+        self.output += chr(0x00)
+        self.output += chr(0x00)
+        self.output += chr(0x00)
+        self.output += chr(0x31)
+        self.output += chr(0xff)
+        self.output += chr(0xf0)
 
-        self.write_int(pattern.bounds.width)
-        self.write_int(pattern.bounds.height)
-        self.write_int(0x1e0)
-        self.write_int(0x1b0)
-        self.write_int(0x9000 | -int(round(pattern.bounds.left)), LE=False)
-        self.write_int(0x9000 | -int(round(pattern.bounds.top)), LE=False)
+        self.output += self.write_int(pattern.bounds.width)
+        self.output += self.write_int(pattern.bounds.height)
+        self.output += self.write_int(0x1e0)
+        self.output += self.write_int(0x1b0)
+        self.output += self.write_int(0x9000 | -int(round(pattern.bounds.left)), LE=False)
+        self.output += self.write_int(0x9000 | -int(round(pattern.bounds.top)), LE=False)
 
         thisX = 0.0
         thisY = 0.0
@@ -466,30 +488,30 @@ class BrotherEmbroideryFile():
                 thisY += deltaY
 
                 if "STOP" in stitch.tags or "COLOR" in stitch.tags:
-                    self.fh.write(chr(0xFE))
-                    self.fh.write(chr(0xB0))
-                    self.fh.write(chr(stopCode))
+                    self.output += chr(0xFE)
+                    self.output += chr(0xB0)
+                    self.output += chr(stopCode)
                     if stopCode == 2:
                         stopCode = 1
                     else:
                         stopCode = 2
                 elif "END" in stitch.tags:
-                    self.fh.write(chr(0xff))
+                    self.output += chr(0xff)
                     break
                 elif -64 < deltaX < 63 and -64 < deltaY < 63 and not (
                                 "TRIM" in stitch.tags or "JUMP" in stitch.tags):
-                    self.fh.write(chr(deltaX + 0x80 if deltaX < 0 else deltaX))
-                    self.fh.write(chr(deltaY + 0x80 if deltaY < 0 else deltaY))
+                    self.output += chr(deltaX + 0x80 if deltaX < 0 else deltaX)
+                    self.output += chr(deltaY + 0x80 if deltaY < 0 else deltaY)
                 else:
                     self.encode_jump(deltaX, stitch.tags)
                     self.encode_jump(deltaY, stitch.tags)
 
-        graphicsOffsetValue = self.fh.tell() - graphics_offset_location + 2
-        self.fh.seek(graphics_offset_location)
-        self.fh.write(chr(graphicsOffsetValue & 0xFF))
-        self.fh.write(chr((graphicsOffsetValue >> 8) & 0xFF))
-        self.fh.write(chr((graphicsOffsetValue >> 16) & 0xFF))
-        self.fh.seek(0, 2)
+        graphics_offset_value = len(self.output) - graphics_offset_location + 2
+        self.output = self.output[:graphics_offset_location] + \
+                      chr(graphics_offset_value & 0xFF) + \
+                      chr((graphics_offset_value >> 8) & 0xFF) + \
+                      chr((graphics_offset_value >> 16) & 0xFF) + \
+                      self.output[graphics_offset_location + 3:]
 
         populateImage(pattern)
         self.write_image(pattern.image)
@@ -500,18 +522,35 @@ class BrotherEmbroideryFile():
 
 
 def pattern_to_csv(pattern, filename):
-    output_file = open(filename, "wb")
-    writer = csv.writer(output_file, delimiter=",")
-    writer.writerow(
+    def wrap_string_list(input_list):
+        output_list = []
+        for i in input_list:
+            output_list.append('"'+str(i)+'"')
+        return ",".join(output_list)+"\n"
+    if isinstance(filename, str) or isinstance(filename, unicode):
+        output_file = open(filename, "wb")
+    else:
+        output_file = filename
+    output_file.write(wrap_string_list(
         ["#", "[THREAD_NUMBER]", "[RED]", "[GREEN]", "[BLUE]", "[DESCRIPTION]",
-         "[CATALOG_NUMBER]"])
+         "[CATALOG_NUMBER]"]))
     for i in range(pattern.thread_count):
-        writer.writerow(["$", str(i + 1), "186", "152", "0", "(null)", "(null)"])
+        output_file.write(wrap_string_list(["$", str(i + 1), "186", "152", "0", "(null)", "(null)"]))
+
+    output_file.write(wrap_string_list(["#", "[STITCH_TYPE]", "[X]", '[Y]']))
+    for block in pattern.blocks:
+        for stitch in block.stitches:
+            output_file.write(wrap_string_list(["*", stitch.tags[0], stitch.xx, stitch.yy]))
+    output_file.close()
 
 
 def populateImage(pattern, index=None):
-    yFactor = 32.0 / pattern.bounds.height
-    xFactor = 42.0 / pattern.bounds.width
+    yFactor = 32.0
+    xFactor = 42.0
+    if pattern.bounds.height > 0:
+        yFactor /= pattern.bounds.height
+    if pattern.bounds.width > 0:
+        xFactor /= pattern.bounds.width
 
     for i, block in enumerate(pattern.blocks):
         for stitch in block.stitches:

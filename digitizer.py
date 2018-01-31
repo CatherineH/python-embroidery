@@ -9,7 +9,6 @@ import re
 from inspect import getsourcefile
 import webcolors
 
-
 css2_names_to_hex = webcolors.css2_names_to_hex
 from webcolors import hex_to_rgb
 
@@ -22,7 +21,7 @@ from svgpathtools.svg2paths import ellipse2pathd, rect2pathd
 from sys import argv
 import csv
 
-from brother import Pattern, Stitch, Block, BrotherEmbroideryFile
+from brother import Pattern, Stitch, Block, BrotherEmbroideryFile, pattern_to_csv
 
 
 def overall_bbox(paths):
@@ -54,8 +53,8 @@ def get_color(v, part="fill"):
                 return [0, 0, 0]
         else:
             return [0, 0, 0]
-    if v['style'].find(part+':') >= 0:
-        color = v['style'].split(part+':')[1].split(";")[0]
+    if v['style'].find(part + ':') >= 0:
+        color = v['style'].split(part + ':')[1].split(";")[0]
         if color[0] == '#':
             return hex_to_rgb(color)
         elif color == "none":
@@ -68,17 +67,21 @@ def get_color(v, part="fill"):
         return [0, 0, 0]
 
 
-def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_test.svg'):
+def svg_to_pattern(filecontents, debug="debug.svg",
+                   stitches_file='intersection_test.svg'):
     doc = parseString(filecontents)
 
     def add_block(stitches):
         if last_color is not None:
             block = Block(stitches=stitches, color=last_color)
             pattern.blocks.append(block)
+        else:
+            print("last color was none, not adding the block")
         return []
+
     # make sure the document size is appropriate
-    #assert root.attrib['width'] == '4in'
-    #assert root.attrib['height'] == '4in'
+    # assert root.attrib['width'] == '4in'
+    # assert root.attrib['height'] == '4in'
     root = doc.getElementsByTagName('svg')[0]
     viewbox = root.getAttribute('viewBox')
     _, attributes = svgdoc2paths(doc)
@@ -88,7 +91,8 @@ def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_
             if 'cx' in v:
                 attributes[k]['d'] = ellipse2pathd(v)
             elif 'x1' in v:
-                attributes[k]['d'] = "M %s %s L %s %s" % (v['x1'], v['y1'], v['x2'], v['y2'])
+                attributes[k]['d'] = "M %s %s L %s %s" % (
+                v['x1'], v['y1'], v['x2'], v['y2'])
             elif 'width' in v and 'x' in v:
                 attributes[k]['d'] = rect2pathd(v)
             else:
@@ -105,8 +109,8 @@ def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_
         for k, v in enumerate(attributes):
             paths += parse_path(v['d'])
         bbox = overall_bbox(paths)
-        width = bbox[1]-bbox[0]
-        height = bbox[3]-bbox[2]
+        width = bbox[1] - bbox[0]
+        height = bbox[3] - bbox[2]
 
     if width > height:
         scale = size / width
@@ -129,7 +133,7 @@ def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_
             for j in range(len(intersection)):
                 if i == j:
                     continue
-                diffs.append(abs(intersection[i]-intersection[j]))
+                diffs.append(abs(intersection[i] - intersection[j]))
         return diffs
 
     def safe_wsvg(paths, filename):
@@ -164,7 +168,8 @@ def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_
                 if len([x for x in diffs if x < epsilon]) > 0:
                     debug_paths.append(line)
                     safe_wsvg(debug_paths, debug)
-                    raise ValueError("two intersections are the same!", line, path, intersections)
+                    raise ValueError("two intersections are the same!", line, path,
+                                     intersections)
         for intersection in intersections:
             dwg.add(dwg.circle(center=(intersection.real, intersection.imag),
                                r=minimum_stitch * 0.1))
@@ -174,11 +179,12 @@ def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_
             for path in paths:
                 debug_paths.append(path)
             for intersection in intersections:
-                debug_paths.append(Line(start=intersection+minimum_stitch+minimum_stitch*1j,
-                                        end=intersection-minimum_stitch-minimum_stitch*1j))
                 debug_paths.append(
-                    Line(start=intersection - minimum_stitch + minimum_stitch*1j,
-                         end=intersection + minimum_stitch - minimum_stitch*1j))
+                    Line(start=intersection + minimum_stitch + minimum_stitch * 1j,
+                         end=intersection - minimum_stitch - minimum_stitch * 1j))
+                debug_paths.append(
+                    Line(start=intersection - minimum_stitch + minimum_stitch * 1j,
+                         end=intersection + minimum_stitch - minimum_stitch * 1j))
 
             safe_wsvg(debug_paths, debug)
             raise ValueError("only got one intersection!", line)
@@ -187,45 +193,49 @@ def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_
                                      end=(intersections[1].real, intersections[1].imag),
                                      stroke=svg_fill, stroke_width=minimum_stitch * 0.1))
         # grab the point furthest from the start
-        lowest = argmax([abs(i-line.start) for i in intersections])
+        lowest = argmax([abs(i - line.start) for i in intersections])
 
         return intersections[lowest]
 
     def fill(v):
-        fudge_factor = 0.0 # this fudge factor is added to guarantee that the line goes
+        fudge_factor = 0.0  # this fudge factor is added to guarantee that the line goes
         # slightly over the object
         paths = parse_path(v['d'])
         bbox = overall_bbox(paths)
         if bbox[0] == bbox[1] or bbox[2] == bbox[3]:
             return
         current_height = bbox[2]
-        last_stitch = bbox[0]+ 1j*current_height
+        last_stitch = bbox[0] + 1j * current_height
         # left/right toggle
         going_east = True
         while last_stitch.imag < bbox[3]:
             angle = 0.05
             if going_east:
                 line = Line(start=last_stitch,
-                        end=bbox[1]*(1.0+fudge_factor) + 1j*(last_stitch.imag+(bbox[1]-last_stitch.real)*angle))
+                            end=bbox[1] * (1.0 + fudge_factor) + 1j * (
+                            last_stitch.imag + (bbox[1] - last_stitch.real) * angle))
             else:
                 line = Line(end=bbox[0] * (1.0 - fudge_factor) + 1j * (
-                last_stitch.imag + (bbox[1] - last_stitch.real) * angle),
+                    last_stitch.imag + (bbox[1] - last_stitch.real) * angle),
                             start=last_stitch)
             if line.start == line.end:
-                raise ValueError("start is the same as end! last stitch is: %s " % last_stitch)
+                raise ValueError(
+                    "start is the same as end! last stitch is: %s " % last_stitch)
             try:
                 last_stitch = find_intersections(line, v)
             except ValueError as e:
-                print("got valueerror on last stitch: %s" %(e))
+                print("got valueerror on last stitch: %s" % (e))
                 break
+            to = Stitch(["STITCH"], last_stitch.real *scale, last_stitch.imag * scale,
+                        color=fill_color)
+            stitches.append(to)
             going_east = not going_east
-
 
     for k, v in enumerate(attributes):
         # first, look for the color from the fill
         fill_color = get_color(v, "fill")
         stroke_color = get_color(v, "stroke")
-
+        print("colors", fill_color, stroke_color)
         if len(pattern.blocks) == 0:
             pattern.blocks.append(Block([Stitch(["JUMP"], 0, 0)], color=fill_color))
 
@@ -234,8 +244,10 @@ def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_
             stitches = add_block(stitches)
         paths = parse_path(v['d'])
         fill(v)
-
-
+        last_color = fill_color
+        print(pattern)
+        add_block(stitches)
+        print(pattern)
         # then do the stroke
         if stroke_color is None:
             continue
@@ -250,13 +262,14 @@ def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_
                 t = 0.0
             if path.length() == 0:
                 continue
-            #print(type(path))
+            # print(type(path))
             while t <= 1.0:
-                #print(path.point(t).real * scale, height*scale-path.point(t).imag * scale)
-                to = Stitch(["STITCH"], path.point(t).real * scale, path.point(t).imag * scale, color=stroke_color)
+                # print(path.point(t).real * scale, height*scale-path.point(t).imag * scale)
+                to = Stitch(["STITCH"], path.point(t).real * scale,
+                            path.point(t).imag * scale, color=stroke_color)
                 if str(type(path)).find("Line") >= 0:
                     t += 1.0
-                    #print(t)
+                    # print(t)
                 else:
                     t += minimum_stitch / path.length()
                 if len(stitches) == 0:
@@ -269,7 +282,8 @@ def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_
                         pattern.blocks.append(block)
 
                     print("color", stroke_color)
-                    block = Block(stitches=[Stitch(["JUMP"], to.xx, to.yy)], color=stroke_color)
+                    block = Block(stitches=[Stitch(["JUMP"], to.xx, to.yy)],
+                                  color=stroke_color)
                     pattern.blocks.append(block)
                 stitches.append(to)
         last_color = stroke_color
@@ -277,8 +291,9 @@ def svg_to_pattern(filecontents, debug="debug.svg", stitches_file='intersection_
     dwg.write(dwg.filename, pretty=False)
     add_block(stitches)
     last_stitch = pattern.blocks[-1].stitches[-1]
-    pattern.blocks.append(Block(stitches=[Stitch(["END"], last_stitch.xx, last_stitch.yy)],
-                                color=pattern.blocks[-1].color))
+    pattern.blocks.append(
+        Block(stitches=[Stitch(["END"], last_stitch.xx, last_stitch.yy)],
+              color=pattern.blocks[-1].color))
 
     print(pattern.thread_count)
     print("thread colors")
@@ -300,12 +315,12 @@ def upload(pes_filename):
 
     mount_destination = None
     for mount_point in mount_points:
-        out = check_output(["udevadm", "info", "--name="+mount_point, "--attribute-walk"])
-        if out.find('ATTRS{idVendor}=="04f9"')> 0:
+        out = check_output(
+            ["udevadm", "info", "--name=" + mount_point, "--attribute-walk"])
+        if out.find('ATTRS{idVendor}=="04f9"') > 0:
             print("found brother device, assuming embroidery machine")
             mount_destination = mount_points[mount_point]
             break
-
 
     if mount_destination is None:
         print("could not find brother embroidery machine to transfer to")
@@ -317,16 +332,16 @@ def upload(pes_filename):
             copyfile(pes_filename, join(mount_destination, basename(pes_filename)))
 
 
-
 if __name__ == "__main__":
     start = time()
-    filename = "circles.svg"#"ns_flag.svg"#"flowers.svg"
+    filename = "circle.svg"  # "ns_flag.svg"#"flowers.svg"
     filecontents = open(join("workspace", filename), "r").read()
     debug_fh = open("debug.svg", "w")
     stitches_fh = open("intersection_test.svg", "w")
     pattern = svg_to_pattern(filecontents, debug_fh, stitches_fh)
     end = time()
-    print("digitizer time: %s" % (end-start))
+    print("digitizer time: %s" % (end - start))
     print("pattern bounds", str(pattern.bounds))
+    pattern_to_csv(pattern, filename+".csv")
     bef = BrotherEmbroideryFile(filename + ".pes")
     bef.write_pattern(pattern)

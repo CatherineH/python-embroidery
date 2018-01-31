@@ -2,7 +2,7 @@
 
 # workspace is a directory to store all user-created patterns and svgs
 workspace
-
+*.csv
 __pycache__
 *.pyc
 debug.svg

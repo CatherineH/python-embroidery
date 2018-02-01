@@ -72,9 +72,11 @@ def svg_to_pattern(filecontents, debug="debug.svg",
     doc = parseString(filecontents)
 
     def add_block(stitches):
+        if len(stitches) == 0:
+            return []
         if last_color is not None:
             block = Block(stitches=stitches, color=last_color)
-            pattern.blocks.append(block)
+            pattern.add_block(block)
         else:
             print("last color was none, not adding the block")
         return []
@@ -93,7 +95,7 @@ def svg_to_pattern(filecontents, debug="debug.svg",
             elif 'x1' in v:
                 attributes[k]['d'] = "M %s %s L %s %s" % (
                 v['x1'], v['y1'], v['x2'], v['y2'])
-            elif 'width' in v and 'x' in v:
+            elif 'width' in v and 'height' in v:
                 attributes[k]['d'] = rect2pathd(v)
             else:
                 print("I'm not sure what to do with %s" % v)
@@ -152,11 +154,14 @@ def svg_to_pattern(filecontents, debug="debug.svg",
         intersections = []
         debug_paths = []
         for path in paths:
+            if path.start == path.end:
+                continue
             debug_paths.append(path)
 
             dwg.add(dwg.path(v['d'],
                              stroke=svgwrite.rgb(fill_color[0], fill_color[1],
                                                  fill_color[2], '%'), fill="none"))
+            #print(line.start == line.end, path.start==path.end)
             line_intersections = line.intersect(path)
             for line_intersection in line_intersections:
                 intersection_point = line.point(line_intersection[0])
@@ -232,12 +237,14 @@ def svg_to_pattern(filecontents, debug="debug.svg",
             going_east = not going_east
 
     for k, v in enumerate(attributes):
+        if len(v['d']) > 5000:
+            continue
         # first, look for the color from the fill
         fill_color = get_color(v, "fill")
         stroke_color = get_color(v, "stroke")
         print("colors", fill_color, stroke_color)
         if len(pattern.blocks) == 0:
-            pattern.blocks.append(Block([Stitch(["JUMP"], 0, 0)], color=fill_color))
+            pattern.add_block(Block([Stitch(["JUMP"], 0, 0)], color=fill_color))
 
         # first, do the fill - horizontal lines zigzagging from top to bottom
         if last_color != stroke_color:
@@ -276,22 +283,22 @@ def svg_to_pattern(filecontents, debug="debug.svg",
                     if last_color is not None:
                         block = Block(stitches=[Stitch(["TRIM"], to.xx, to.yy)],
                                       color=last_color)
-                        pattern.blocks.append(block)
+                        pattern.add_block(block)
                         block = Block(stitches=[Stitch(["COLOR"], to.xx, to.yy)],
                                       color=stroke_color)
-                        pattern.blocks.append(block)
+                        pattern.add_block(block)
 
                     print("color", stroke_color)
                     block = Block(stitches=[Stitch(["JUMP"], to.xx, to.yy)],
                                   color=stroke_color)
-                    pattern.blocks.append(block)
+                    pattern.add_block(block)
                 stitches.append(to)
         last_color = stroke_color
 
     dwg.write(dwg.filename, pretty=False)
     add_block(stitches)
     last_stitch = pattern.blocks[-1].stitches[-1]
-    pattern.blocks.append(
+    pattern.add_block(
         Block(stitches=[Stitch(["END"], last_stitch.xx, last_stitch.yy)],
               color=pattern.blocks[-1].color))
 
@@ -334,7 +341,7 @@ def upload(pes_filename):
 
 if __name__ == "__main__":
     start = time()
-    filename = "circle.svg"  # "ns_flag.svg"#"flowers.svg"
+    filename = "discontinuous.svg"#"flowers.svg"
     filecontents = open(join("workspace", filename), "r").read()
     debug_fh = open("debug.svg", "w")
     stitches_fh = open("intersection_test.svg", "w")

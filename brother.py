@@ -158,6 +158,12 @@ class Pattern():
         self.current_color = 0
         self.image = imageWithFrame
 
+    def add_block(self, block):
+        # does some validation on adding a block
+        if len(block.stitches) == 0:
+            raise ValueError("adding block with no stitches! %s" % block)
+        self.blocks.append(block)
+
     @property
     def bounds(self):
         return calc_bounding_box(self.blocks)
@@ -171,9 +177,12 @@ class Pattern():
 
     @property
     def thread_colors(self):
+        blocks_with_stitches = [block for block in self.blocks if len(block.stitches) > 0]
+        if len(blocks_with_stitches) != len(self.blocks):
+            raise ValueError("This pattern has a block with no stitches!")
         # return set([block.color for block in self.blocks])
         # look for trim, or end not color, to signify the end of the pattern
-        return [block.color for block in self.blocks
+        return [block.color for block in blocks_with_stitches
                 if "TRIM" in block.stitches[0].tags or "END" in block.stitches[0].tags]
 
     def __str__(self):
@@ -229,6 +238,8 @@ class Block:
         return len(self.stitches)  # - self.stitch_type
 
     def __str__(self):
+        if self.num_stitches == 0:
+            return "Block has no stitches"
         output = "stitch_type: {}, color: {}, num_stitches: {}\n".format(self.stitch_type,
                                                                          self.color,
                                                                          self.num_stitches)

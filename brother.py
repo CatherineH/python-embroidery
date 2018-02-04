@@ -1,7 +1,7 @@
 import struct
 import csv
 from os.path import basename, splitext
-
+from svgpathtools import wsvg, Path, Line
 from numpy import argmin
 
 pecThreads = [[[0, 0, 0], "Unknown", ""],
@@ -215,6 +215,10 @@ class Stitch:
         self.yy = yy
         self.color = color
 
+    @property
+    def complex(self):
+        return self.xx + self.yy*1j
+
     def __str__(self):
         return "{} {} {}\n".format(self.xx, self.yy, self.tags[0])
 
@@ -236,6 +240,11 @@ class Block:
     @property
     def num_stitches(self):
         return len(self.stitches)  # - self.stitch_type
+
+
+    @property
+    def tuple_color(self):
+        return tuple(pecThreads[self.color][0])
 
     def __str__(self):
         if self.num_stitches == 0:
@@ -334,6 +343,8 @@ class BrotherEmbroideryFile():
         self.output = ''
 
     def write_pattern(self, pattern):
+        self.output += "#PES0001"
+
         self.output += self.write_int(0x00, width=4)
 
         for _ in range(3):
@@ -347,15 +358,15 @@ class BrotherEmbroideryFile():
                 print(b)
 
         self.c_sew_seg(pattern)
-
-        self.output += "#PES0001"
         pec_location = len(self.output)
 
-        self.output = self.output[:0x08] + self.write_int(pec_location,
-                                                          width=4) + self.output[
+        self.output = self.output[:0x08] + \
+                      self.write_int(pec_location, width=4) + self.output[
                                                                      0x08 + 4:]
 
         self.write_pec_stitches(pattern)
+
+        print("writing output: ", self.output, self.fh)
         self.fh.write(self.output)
         self.fh.close()
 
@@ -490,7 +501,7 @@ class BrotherEmbroideryFile():
 
         thisX = 0.0
         thisY = 0.0
-        stopCode = 2
+        stope_code = 2
         for block in pattern.blocks:
             for stitch in block.stitches:
                 deltaX = int(round(stitch.xx - thisX))
@@ -501,11 +512,11 @@ class BrotherEmbroideryFile():
                 if "STOP" in stitch.tags or "COLOR" in stitch.tags:
                     self.output += chr(0xFE)
                     self.output += chr(0xB0)
-                    self.output += chr(stopCode)
-                    if stopCode == 2:
-                        stopCode = 1
+                    self.output += chr(stope_code)
+                    if stope_code == 2:
+                        stope_code = 1
                     else:
-                        stopCode = 2
+                        stope_code = 2
                 elif "END" in stitch.tags:
                     self.output += chr(0xff)
                     break
@@ -524,11 +535,11 @@ class BrotherEmbroideryFile():
                       chr((graphics_offset_value >> 16) & 0xFF) + \
                       self.output[graphics_offset_location + 3:]
 
-        populateImage(pattern)
+        populate_image(pattern)
         self.write_image(pattern.image)
         for i in range(pattern.thread_count):
             pattern.image = imageWithFrame
-            populateImage(pattern, index=i)
+            populate_image(pattern, index=i)
             self.write_image(pattern.image)
 
 
@@ -545,17 +556,44 @@ def pattern_to_csv(pattern, filename):
     output_file.write(wrap_string_list(
         ["#", "[THREAD_NUMBER]", "[RED]", "[GREEN]", "[BLUE]", "[DESCRIPTION]",
          "[CATALOG_NUMBER]"]))
-    for i in range(pattern.thread_count):
-        output_file.write(wrap_string_list(["$", str(i + 1), "186", "152", "0", "(null)", "(null)"]))
+    for i, color in enumerate(pattern.thread_colors):
+        output_file.write(wrap_string_list(["$", str(i + 1)]+pecThreads[color][0]+["(null)", "(null)"]))
 
     output_file.write(wrap_string_list(["#", "[STITCH_TYPE]", "[X]", '[Y]']))
     for block in pattern.blocks:
+
         for stitch in block.stitches:
-            output_file.write(wrap_string_list(["*", stitch.tags[0], stitch.xx, stitch.yy]))
+            output_file.write(wrap_string_list(["*", stitch.tags[0], stitch.xx, pattern.bounds.height-stitch.yy]))
     output_file.close()
 
 
-def populateImage(pattern, index=None):
+def pattern_to_svg(pattern, filename):
+    if isinstance(filename, str) or isinstance(filename, unicode):
+        output_file = open(filename, "wb")
+    else:
+        output_file = filename
+    paths = []
+    colors = []
+    for block in pattern.blocks:
+        block_paths = []
+        last_stitch = None
+        for stitch in block.stitches:
+            if "JUMP" in stitch.tags:
+                last_stitch = stitch
+                continue
+            if last_stitch is None:
+                last_stitch = stitch
+                continue
+            block_paths.append(Line(start=last_stitch.complex, end=stitch.complex))
+            last_stitch = stitch
+        if len(block_paths) > 0:
+            colors.append(block.tuple_color)
+            paths.append(Path(*block_paths))
+    print(colors)
+    wsvg(paths, colors, filename = output_file)
+
+
+def populate_image(pattern, index=None):
     yFactor = 32.0
     xFactor = 42.0
     if pattern.bounds.height > 0:
@@ -574,7 +612,7 @@ def populateImage(pattern, index=None):
 
 
 if __name__ == "__main__":
-    input_file = 'duck_pattern.csv'
+    input_file = 'text.svg.csv'
     pattern = csv_to_pattern(input_file)
     bef = BrotherEmbroideryFile(input_file + ".pes")
     bef.write_pattern(pattern)

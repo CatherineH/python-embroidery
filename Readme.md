@@ -44,4 +44,15 @@ Text elements, such as:
 <text> Hello world!</text>
 ```
 
-will not be rendered.
+Will only be rendered if you are using my fork of [svgpathtools](https://github.com/CatherineH/svgpathtools)
+
+
+Unclosed paths will not be filled
+------
+
+If a path does not end where it started, it will not get filled in. This is in contrast to how SVGs are typically rendered, where any area within a concave path are filled in.
+
+Narrow paths have infinite stitches
+--------
+
+normalized stitch density has not yet been implemented. If you have a narrow area, it will get an infinite number of stitches.

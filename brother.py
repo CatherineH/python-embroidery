@@ -222,6 +222,9 @@ class Stitch:
     def __str__(self):
         return "{} {} {}\n".format(self.xx, self.yy, self.tags[0])
 
+    def __repr__(self):
+        return self.__str__()
+
 
 class Block:
     # a block is a contiguous set of stitches
@@ -324,7 +327,7 @@ def calc_bounding_box(blocks):
         for stitch in stitches:
             if "TRIM" in stitch.tags:
                 continue
-            bounding_rect.left = min(bounding_rect.left, stitch.xx)
+            bounding_rect.left = min(bounding_rect.left, stitch.xx*10.0)
             bounding_rect.top = min(bounding_rect.top, stitch.yy)
             bounding_rect.right = max(bounding_rect.right, stitch.xx)
             bounding_rect.bottom = max(bounding_rect.bottom, stitch.yy)
@@ -366,7 +369,6 @@ class BrotherEmbroideryFile():
 
         self.write_pec_stitches(pattern)
 
-        print("writing output: ", self.output, self.fh)
         self.fh.write(self.output)
         self.fh.close()
 
@@ -563,7 +565,7 @@ def pattern_to_csv(pattern, filename):
     for block in pattern.blocks:
 
         for stitch in block.stitches:
-            output_file.write(wrap_string_list(["*", stitch.tags[0], stitch.xx, pattern.bounds.height-stitch.yy]))
+            output_file.write(wrap_string_list(["*", stitch.tags[0], stitch.xx/10.0, 0.1*(pattern.bounds.height-stitch.yy)]))
     output_file.close()
 
 
@@ -589,7 +591,9 @@ def pattern_to_svg(pattern, filename):
         if len(block_paths) > 0:
             colors.append(block.tuple_color)
             paths.append(Path(*block_paths))
-    print(colors)
+    if len(paths) == 0:
+        print("warning: pattern did not generate stitches")
+        return
     wsvg(paths, colors, filename = output_file)
 
 

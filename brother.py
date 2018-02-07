@@ -188,8 +188,8 @@ class Pattern():
     def __str__(self):
         output = ""
         for i, block in enumerate(self.blocks):
-            output += "Block Number: %s, color %s, number of stitches: %s\n" % \
-                      (i, block.color, block.num_stitches)
+            output += "Block Number: %s, color %s, number of stitches: %s, type: %s\n" % \
+                      (i, block.color, block.num_stitches, block.stitches[-1].tags[0])
         return output
 
     def __repr__(self):
@@ -465,7 +465,6 @@ class BrotherEmbroideryFile():
             pes_name = pes_name + chr(0x20)
         pes_name = pes_name[0:16]
 
-        print(self.filename, pes_name)
         self.output += str(pes_name)
         self.output += chr(0x0D)
         for _ in range(12):

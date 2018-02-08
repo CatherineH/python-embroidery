@@ -1,3 +1,4 @@
+from collections import defaultdict
 from os import statvfs, remove
 from os.path import join, abspath, basename, getsize, exists
 from shutil import copyfile
@@ -40,8 +41,15 @@ def overall_bbox(paths):
         over_bbox[3] = max(over_bbox[3], bbox[3])
     return over_bbox
 
+
 def path1_is_contained_in_path2(path1, path2):
+    '''
+    if not path2.iscontinuous():
+        print(path2.d())
+    if not path2.isclosed():
+        print(path2)
     assert path2.isclosed()  # This question isn't well-defined otherwise
+    '''
     if path2.intersect(path1):
         return False
 
@@ -70,9 +78,9 @@ def get_color(v, part="fill"):
             elif v[part][0] == "#":
                 return hex_to_rgb(v[part])
             else:
-                return [0, 0, 0]
+                return None
         else:
-            return [0, 0, 0]
+            return None
     if v['style'].find(part + ':') >= 0:
         color = v['style'].split(part + ':')[1].split(";")[0]
         if color[0] == '#':
@@ -81,10 +89,10 @@ def get_color(v, part="fill"):
             return None
         else:
             print("not sure what to do with color: %s" % color)
-            return [0, 0, 0]
+            return None
     else:
         # the color is black
-        return [0, 0, 0]
+        return None
 
 
 def svg_to_pattern(filecontents, debug="debug.svg",
@@ -93,10 +101,12 @@ def svg_to_pattern(filecontents, debug="debug.svg",
 
     def add_block(stitches):
         if len(stitches) == 0:
+            print("got no stitches in add block!")
             return []
         if last_color is not None:
             block = Block(stitches=stitches, color=last_color)
             pattern.add_block(block)
+
         else:
             print("last color was none, not adding the block")
         return []
@@ -123,7 +133,6 @@ def svg_to_pattern(filecontents, debug="debug.svg",
         lims = [float(i) for i in viewbox.split(" ")]
         width = abs(lims[0] - lims[2])
         height = abs(lims[1] - lims[3])
-        print(width, height)
     else:
         # run through all the coordinates
         bbox = overall_bbox(all_paths)
@@ -164,22 +173,61 @@ def svg_to_pattern(filecontents, debug="debug.svg",
             print("filename is a string", type(filename))
             wsvg(paths, filename=filename)
 
-    def fill_test(paths, stitches):
+    current_grid = defaultdict(dict)
+
+    def initialize_grid(paths):
+        #current_grid = defaultdict(dict)
         bbox = overall_bbox(paths)
-        curr_x = bbox[0]
+        curr_x = int(bbox[0]/minimum_stitch)*minimum_stitch
         while curr_x < bbox[1]:
-            curr_y = bbox[2]
+            curr_y = int(bbox[2]/minimum_stitch)*minimum_stitch
+
             while curr_y < bbox[3]:
-                test_line = Line(start=curr_x+curr_y*1j, end=curr_x+minimum_stitch+(curr_y+minimum_stitch)*1j)
+                test_line = Line(start=curr_x + curr_y * 1j,
+                                 end=curr_x + minimum_stitch + (
+                                                               curr_y + minimum_stitch) * 1j)
                 is_contained = path1_is_contained_in_path2(test_line, Path(*paths))
                 if is_contained:
-                    # now check to see whether any stitches intersect that bbox
-                    
-                    shape = svgwrite.shapes.Rect(insert=(curr_x, curr_y), size=(minimum_stitch, minimum_stitch), fill="#dddddd")
-                    intersection_shapes.insert(0, shape)
+                    current_grid[curr_x][curr_y] = False
                 curr_y += minimum_stitch
             curr_x += minimum_stitch
-        print("bbox", bbox)
+
+    def fill_test(paths, stitches, initialize=True):
+        if initialize:
+            initialize_grid(paths)
+        for i in range(1, len(stitches)):
+            x_lower = min(stitches[i-1].xx/scale, stitches[i].xx/scale)
+            x_upper = max(stitches[i-1].xx/scale, stitches[i].xx/scale)
+            y_lower = min(stitches[i-1].yy/scale, stitches[i].yy/scale)
+            y_upper = max(stitches[i-1].yy/scale, stitches[i].yy/scale)
+
+            curr_x = int(x_lower/minimum_stitch)*minimum_stitch
+            while curr_x <= x_upper+minimum_stitch:
+                curr_y = int(y_lower/minimum_stitch)*minimum_stitch
+                while curr_y <= y_upper+minimum_stitch:
+                    if curr_x in current_grid:
+                        if curr_y in current_grid[curr_x]:
+                            current_grid[curr_x][curr_y] = True
+                    curr_y += minimum_stitch
+                curr_x += minimum_stitch
+        last_point = [max(current_grid), 0]
+        all_filled = True
+        for curr_x in current_grid:
+            for curr_y in current_grid[curr_x]:
+                if not current_grid[curr_x][curr_y]:
+                    all_filled = False
+                    if curr_x < last_point[0] and curr_y > last_point[1]:
+                        last_point = [curr_x, curr_y]
+        return all_filled, last_point[0]+last_point[1]*1j
+
+    def draw_fill():
+        colors = ["#dddddd", "#00ff00"]
+        for curr_x in current_grid:
+            for curr_y in current_grid[curr_x]:
+                shape = svgwrite.shapes.Rect(insert=(curr_x, curr_y),
+                                             size=(minimum_stitch, minimum_stitch),
+                                             fill=colors[current_grid[curr_x][curr_y]])
+                intersection_shapes.insert(0, shape)
 
     def find_intersections(line, v, paths):
         svg_fill = svgwrite.rgb(fill_color[0], fill_color[1], fill_color[2], '%')
@@ -216,9 +264,7 @@ def svg_to_pattern(filecontents, debug="debug.svg",
         # remove any intersections that are within the minimum stitch from each other
         diffs = [abs(intersections[i]-intersections[i-1]) for i in range(1, len(intersections))]
         intersections = [intersections[diff_i] for diff_i in range(len(diffs)) if diffs[diff_i] > minimum_stitch ]+[intersections[-1]]
-        if len(intersections) > 2:
-            print("sorted intersections:", line.start, intersections)
-        elif len(intersections) < 2:
+        if len(intersections) < 2:
             raise ValueError("too few intersections")
 
         intersection_shapes.append(svgwrite.shapes.Line(start=(intersections[0].real, intersections[0].imag),
@@ -227,7 +273,28 @@ def svg_to_pattern(filecontents, debug="debug.svg",
 
         return intersections[1]
 
-    def fill_zig_zag(v, paths):
+    def fill_zig_zag(v, paths, going_down=True, start_stitch=None):
+        def check_limit(last_stitch):
+            if going_down:
+                return last_stitch.imag < bbox[3]
+            else:
+                return last_stitch.imag > bbox[2]
+
+        def project(last_stitch):
+            dec_angle = 0.05
+            if going_down and going_east:
+                angle = -dec_angle
+                mag = abs(last_stitch-bbox[1]-bbox[3]*1j)
+            elif going_down and not going_east:
+                angle = pi+dec_angle
+                mag = abs(last_stitch - bbox[0] - bbox[3] * 1j)
+            elif not going_down and going_east:
+                angle = dec_angle
+                mag = abs(last_stitch - bbox[1] - bbox[2] * 1j)
+            elif not going_down and not going_east:
+                angle = pi-dec_angle
+                mag = abs(last_stitch - bbox[0] - bbox[2] * 1j)
+            return last_stitch+cos(angle)*mag-sin(angle)*mag*1j
         fudge_factor = 0.001  # this fudge factor is added to guarantee that the line goes
         # slightly over the object
         bbox = overall_bbox(paths)
@@ -237,26 +304,21 @@ def svg_to_pattern(filecontents, debug="debug.svg",
         if not paths[0].start == paths[-1].end:
             return
         current_height = bbox[2]
-        last_stitch = bbox[0] + 1j * current_height
+        if start_stitch is None:
+            last_stitch = bbox[0] + 1j * current_height
+        else:
+            last_stitch = start_stitch
         # left/right toggle
         going_east = True
-        while last_stitch.imag < bbox[3]:
-            angle = 0.05
-            if going_east:
-                line = Line(start=last_stitch,
-                            end=bbox[1] * (1.0 + fudge_factor) + 1j * (
-                                last_stitch.imag + (bbox[1] - last_stitch.real) * angle))
-            else:
-                line = Line(end=bbox[0] * (1.0 - fudge_factor) + 1j * (
-                    last_stitch.imag + (bbox[1] - last_stitch.real) * angle),
-                            start=last_stitch)
+        while check_limit(last_stitch):
+            end_stitch = project(last_stitch)
+            line = Line(start=last_stitch, end=end_stitch)
             if line.start == line.end:
                 raise ValueError(
                     "start is the same as end! last stitch is: %s " % last_stitch)
             try:
                 last_stitch = find_intersections(line, v, paths)
             except ValueError as e:
-                print("got valueerror on last stitch: %s" % (e))
                 break
             if abs(last_stitch-line.start) < minimum_stitch:
                 break
@@ -265,54 +327,51 @@ def svg_to_pattern(filecontents, debug="debug.svg",
             stitches.append(to)
             going_east = not going_east
 
-    for k, v in enumerate(attributes):
-        paths = all_paths[k]
-        # first, look for the color from the fill
-        fill_color = get_color(v, "fill")
-        stroke_color = get_color(v, "stroke")
-        if len(pattern.blocks) == 0 and fill_color is not None:
-            pattern.add_block(Block([Stitch(["JUMP"], 0, 0)], color=fill_color))
-
-        # first, do the fill - horizontal lines zigzagging from top to bottom
-        if last_color != stroke_color:
-            stitches = add_block(stitches)
-        fill_zig_zag(v, paths)
-        fill_test(paths, stitches)
-        if last_color is not None and last_color != fill_color and len(stitches) > 0:
+    def switch_color(stitches, new_color):
+        if last_color is not None and last_color != new_color and len(stitches) > 0:
             to = stitches[-1]
             block = Block(stitches=[Stitch(["TRIM"], to.xx, to.yy)],
                           color=last_color)
             pattern.add_block(block)
-
             block = Block(stitches=[Stitch(["COLOR"], to.xx, to.yy)],
-                          color=last_color)
+                          color=new_color)
             pattern.add_block(block)
+            return []
+        return stitches
+
+    for k, v in enumerate(attributes):
+        paths = all_paths[k]
+        # first, look for the color from the fill
+        fill_color = get_color(v, "fill")
+        if fill_color == None:
+            fill_color = [0, 0, 0]
+        stroke_color = get_color(v, "stroke")
+        print(fill_color, stroke_color)
+        if len(pattern.blocks) == 0 and fill_color is not None:
+            pattern.add_block(Block([Stitch(["JUMP"], 0, 0)], color=fill_color))
+        stitches = switch_color(stitches, fill_color)
+        # first, do the fill - horizontal lines zigzagging from top to bottom
+        filled = False
+        going_down = True
+        start_point = None
+        rounds = 0
+        while not filled and rounds< 4:
+            fill_zig_zag(v, paths, going_down=going_down, start_stitch=start_point)
+            filled, start_point = fill_test(paths, stitches, start_point==None)
+            going_down = not going_down
+            rounds += 1
+        draw_fill()
         last_color = fill_color
         add_block(stitches)
         # then do the stroke
         if stroke_color is None:
             continue
-        if last_color != stroke_color:
-            stitches = add_block(stitches)
+        stitches = switch_color(stitches, stroke_color)
         for i, path in enumerate(paths):
             if path.length() == 0:
                 continue
-
             to = Stitch(["STITCH"], path.start.real * scale,
                         path.start.imag * scale, color=stroke_color)
-
-            if len(stitches) == 0:
-                if "JUMP" not in pattern.blocks[-1].stitches[-1].tags:
-                    block = Block(stitches=[Stitch(["TRIM"], to.xx, to.yy)],
-                                  color=last_color)
-                    pattern.add_block(block)
-                    block = Block(stitches=[Stitch(["COLOR"], to.xx, to.yy)],
-                                  color=stroke_color)
-                    pattern.add_block(block)
-
-                block = Block(stitches=[Stitch(["JUMP"], to.xx, to.yy)],
-                              color=stroke_color)
-                pattern.add_block(block)
             stitches.append(to)
             # look for intermediary control points
             if isinstance(path, QuadraticBezier):
@@ -337,13 +396,15 @@ def svg_to_pattern(filecontents, debug="debug.svg",
                     stitches.append(end_stitch)
             else:
                 stitches.append(end_stitch)
+        if len(stitches) > 0:
+            last_color = stroke_color
+        add_block(stitches)
 
-        last_color = stroke_color
     for shape in intersection_shapes:
         dwg.add(shape)
 
     dwg.write(dwg.filename, pretty=False)
-    add_block(stitches)
+
     last_stitch = pattern.blocks[-1].stitches[-1]
     pattern.add_block(
         Block(stitches=[Stitch(["END"], last_stitch.xx, last_stitch.yy)],
@@ -385,7 +446,7 @@ def upload(pes_filename):
 
 if __name__ == "__main__":
     start = time()
-    filename = "frame.svg"  # "flowers.svg"
+    filename = "circle.svg"
     filecontents = open(join("workspace", filename), "r").read()
     debug_fh = open("debug.svg", "w")
     stitches_fh = open("intersection_test.svg", "w")

@@ -157,6 +157,7 @@ class Pattern():
         self.colors = []
         self.current_color = 0
         self.image = imageWithFrame
+        self.bounding_box = None
 
     def add_block(self, block):
         # does some validation on adding a block
@@ -166,7 +167,9 @@ class Pattern():
 
     @property
     def bounds(self):
-        return calc_bounding_box(self.blocks)
+        if self.bounding_box is None:
+            self.bounding_box = calc_bounding_box(self.blocks)
+        return self.bounding_box
 
     @property
     def thread_count(self):

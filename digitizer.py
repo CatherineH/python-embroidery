@@ -44,8 +44,13 @@ def overall_bbox(paths):
 
 
 def path1_is_contained_in_path2(path1, path2):
-    if path2.intersect(path1):
+    if path2.length() == 0:
         return False
+    if path1.start != path1.end:
+        if path2.start != path2.end:
+            return False
+        if path2.intersect(path1):
+            return False
 
     # find a point that's definitely outside path2
     xmin, xmax, ymin, ymax = path2.bbox()
@@ -282,6 +287,7 @@ def svg_to_pattern(filecontents, debug="debug.svg",
             lines = [Line(start=vector_points[0], end=vector_points[2]), Line(start=vector_points[1], end=vector_points[3])]
             side = 1 if lines[0].length() > lines[1].length() else 0
             fill_shape(side, side+2, paths)
+            return side
 
         def fill_shape(side1, side2, paths):
             if paths[side1].length() == 0:
@@ -343,6 +349,9 @@ def svg_to_pattern(filecontents, debug="debug.svg",
         anim_dwg = svgwrite.Drawing(anim_fh, profile='tiny')
         anim_shapes = []
         while len(paths) > 2:
+            if len(paths) < 4:
+                fill_triangle(paths)
+                return
             remove_close_paths()
             # check whether the next triangle is concave
             test_line = Line(start=paths[0].start, end=paths[1].end)
@@ -369,9 +378,7 @@ def svg_to_pattern(filecontents, debug="debug.svg",
             test_line = Line(start=test_line.point(fudge_factor),
                              end=test_line.point(1 - fudge_factor))
             rect_not_concave = not path1_is_contained_in_path2(test_line, comparison_path)
-            if len(paths) < 4:
-                fill_triangle(paths)
-                return
+
             # test for concavity. If concave, fill as triangle
             if is_concave(paths) or rect_not_concave:
                 fill_triangle(paths)
@@ -382,18 +389,67 @@ def svg_to_pattern(filecontents, debug="debug.svg",
                     anim_shapes.append(anim_dwg.line(start=(shape.start.real, shape.start.imag), end=(shape.end.real, shape.end.imag), fill="none", stroke="blue"))
             else:
                 # check whether the next triangle is concave
-                fill_trap(paths)
+                side = fill_trap(paths)
+                if side:
+                    paths = paths[1:]+[paths[0]]
                 to_remove = []
                 to_remove.append(paths.pop(0))
                 to_remove.append(paths.pop(0))
-                to_remove.append(paths.pop(0))
-                for shape in to_remove:
+                # if the trap was stitched in the vertical (perpendicular to the
+                # stitches), don't remove that segment
+                if not side:
+                    to_remove.append(paths.pop(0))
+                linecolors = ["blue", "purple", "pink"]
+                for i, shape in enumerate(to_remove):
                     anim_shapes.append(
                         anim_dwg.line(start=(shape.start.real, shape.start.imag),
                                       end=(shape.end.real, shape.end.imag), fill="none",
-                                      stroke="blue"))
+                                      stroke=linecolors[i]))
             rotated = 0
-            paths.insert(0, Line(start=paths[-1].end, end=paths[0].start))
+            if paths[-1].end != paths[0].start:
+                # check for intersections
+                closing_line = Line(start=paths[-1].end, end=paths[0].start)
+                start_point = paths[-1].end
+                intersections = []
+                for i, path in enumerate(paths):
+                    if path.length() == 0:
+                        continue
+                    if path.start == closing_line.start and path.end == closing_line.end:
+                        continue
+                    path_intersections = closing_line.intersect(path)
+                    if len(path_intersections) > 0:
+                        intersections += [(i, p) for p in path_intersections]
+
+                if len(intersections)> 0:
+                    closing_lines = []
+                    # I think, but have not proven, that there will always be mod 2
+                    # number of intersections
+                    for i in range(0, len(intersections)-1, 2):
+                        closing_lines.append(Line(start=start_point,
+                                                  end=intersections[i][1][0]+intersections[i][1][1]*1j))
+                        int_section = intersections[i][0]+1
+                        while abs(intersections[i+1][0]-int_section) > 1:
+                            if intersections[i+1][0]-int_section > 0:
+                                closing_lines.append(paths[int_section])
+                                int_section += 1
+                            else:
+                                closing_lines.append(paths[int_section].reverse())
+                                int_section -= 1
+                        if intersections[i + 1][0] - int_section > 0:
+                            closing_lines.append(Line(start = paths[intersections[i+1][0]].start,
+                                                      end=intersections[i+1][1][0]+intersections[i+1][1][1]*1j))
+                            start_point = intersections[i+1][1][0]+intersections[i+1][1][1]*1j
+                        else:
+                            closing_lines.append(
+                                Line(start=paths[intersections[i + 1][0]].start,
+                                     end=intersections[i + 1][1][0]+intersections[i+1][1][1]*1j))
+                            start_point = paths[intersections[i + 1][0]].start
+                    closing_lines.append(Line(start=closing_lines[-1].end,
+                                              end=paths[-1].start))
+                    paths += closing_lines
+                else:
+                    paths.insert(0, closing_line)
+
             anim_shapes.append(anim_dwg.path(d=Path(*paths).d(), fill="none", stroke="black"))
             for shape in anim_shapes:
                 anim_dwg.add(shape)
@@ -403,85 +459,19 @@ def svg_to_pattern(filecontents, debug="debug.svg",
             anim_dwg = svgwrite.Drawing(anim_fh, profile='tiny')
             anim_shapes = []
 
-    def fill_zig_zag(v, paths, going_down=True, start_stitch=None):
-        def check_limit(last_stitch):
-            if going_down:
-                return last_stitch.imag < bbox[3]
-            else:
-                return last_stitch.imag > bbox[2]
-
-        def project(last_stitch):
-            dec_angle = 0.05
-            if going_down and going_east:
-                angle = -dec_angle
-                mag = abs(last_stitch-bbox[1]-bbox[3]*1j)
-            elif going_down and not going_east:
-                angle = pi+dec_angle
-                mag = abs(last_stitch - bbox[0] - bbox[3] * 1j)
-            elif not going_down and going_east:
-                angle = dec_angle
-                mag = abs(last_stitch - bbox[1] - bbox[2] * 1j)
-            elif not going_down and not going_east:
-                angle = pi-dec_angle
-                mag = abs(last_stitch - bbox[0] - bbox[2] * 1j)
-            return last_stitch+cos(angle+global_angle)*mag-sin(angle+global_angle)*mag*1j
-
-        def find_global_angle(start_stitch):
-            '''
-            mag = ((bbox[0]-bbox[1])**2+(bbox[2]-bbox[3])**2)**0.5
-            angle = 0
-            distances = []
-            while angle < 2.0*pi:
-                end_stitch = start_stitch + cos(angle)*mag-sin(angle)*mag*1j
-                intersection_line = Line(start=start_stitch, end=end_stitch)
-                debug_shapes.append(debug_dwg.line(start=(start_stitch.real, start_stitch.imag), end=(end_stitch.real, end_stitch.imag), stroke="blue"))
-                try:
-                    intersection = find_intersections(intersection_line, None, paths)
-                    debug_shapes.append(debug_dwg.circle(center=(intersection.real, intersection.imag), r=minimum_stitch, fill="red", stroke="none"))
-                    diff = abs(start_stitch-intersection)
-                    if diff > minimum_stitch:
-                        distances.append((angle, diff))
-                except ValueError:
-                    pass
-                #print(angle)
-                angle += pi/20.0
-            distances = sorted(distances, key= lambda value: value[1])
-            '''
-            debug_shapes.append(debug_dwg.path(Path(*paths).d(), fill="none", stroke="black"))
-            return 0.0#distances[0][0]
-
-        fudge_factor = 0.001  # this fudge factor is added to guarantee that the line goes
-        # slightly over the object
-        bbox = overall_bbox(paths)
-        if bbox[0] == bbox[1] or bbox[2] == bbox[3]:
-            return
-        # check to see whether the path ends where it starts
-        if not paths[0].start == paths[-1].end:
-            return
-        current_height = bbox[2]
-        if start_stitch is None:
-            last_stitch = paths.point(0)
-        else:
-            last_stitch = start_stitch
-        global_angle = find_global_angle(last_stitch)
-        # left/right toggle
-        going_east = True
-        while check_limit(last_stitch):
-            end_stitch = project(last_stitch)
-            line = Line(start=last_stitch, end=end_stitch)
-            if line.start == line.end:
-                raise ValueError(
-                    "start is the same as end! last stitch is: %s " % last_stitch)
-            try:
-                last_stitch = find_intersections(line, v, paths)
-            except ValueError as e:
-                break
-            if abs(last_stitch-line.start) < minimum_stitch:
-                break
-            to = Stitch(["STITCH"], last_stitch.real * scale, last_stitch.imag * scale,
-                        color=fill_color)
-            stitches.append(to)
-            going_east = not going_east
+    def make_continuous(path):
+        # takes a discontinuous path (like a donut or a figure 8, and slices it together
+        # such that it is continuous
+        cont_paths = path.continuous_subpaths()
+        paths = cont_paths[0][:]
+        for i in range(1, len(cont_paths)):
+            start_point = paths[-1].end
+            paths += [Line(start=start_point, end=cont_paths[i].start)]
+            paths += cont_paths[i][:]
+            paths += [Line(start=cont_paths[-1].end, end=start_point)]
+        full_path = Path(*paths)
+        debug_shapes.append(debug_dwg.path(d=full_path.d(), stroke="blue", fill="none"))
+        return paths
 
     def switch_color(stitches, new_color):
         if last_color is not None and last_color != new_color and len(stitches) > 0:
@@ -505,7 +495,12 @@ def svg_to_pattern(filecontents, debug="debug.svg",
         if len(pattern.blocks) == 0 and fill_color is not None:
             pattern.add_block(Block([Stitch(["JUMP"], 0, 0)], color=fill_color))
         stitches = switch_color(stitches, fill_color)
-        fill_polygon(paths)
+        full_path = Path(*paths)
+        if not full_path.iscontinuous():
+            print("path not continuous")
+            fill_polygon(make_continuous(full_path))
+        else:
+            fill_polygon(paths)
         last_color = fill_color
         add_block(stitches)
         # then do the stroke
@@ -595,7 +590,7 @@ def upload(pes_filename):
 
 if __name__ == "__main__":
     start = time()
-    filename = "schmidt.svg"
+    filename = "d.svg"
     filecontents = open(join("workspace", filename), "r").read()
     debug_fh = open("debug_%s_.svg" % time(), "w")
     stitches_fh = open("intersection_test.svg", "w")

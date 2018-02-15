@@ -1,30 +1,50 @@
 from collections import defaultdict
-from os import statvfs, remove
-from os.path import join, abspath, basename, getsize, exists
+from copy import deepcopy
+from math import asin
+from os import statvfs
+from os.path import join, basename, getsize
 from shutil import copyfile
-from xml.dom.minidom import parse, parseString
+from xml.dom.minidom import parseString
 from time import time
-import io
 
-import re
-from inspect import getsourcefile
 import webcolors
-from subprocess import call
 
 css2_names_to_hex = webcolors.css2_names_to_hex
 from webcolors import hex_to_rgb
 
 import svgwrite
-from numpy import argmax, pi, cos, sin, ceil, average
+from numpy import argmax, pi, ceil, sign
 from svgpathtools import svgdoc2paths, Line, wsvg, Arc, Path, QuadraticBezier
-from svgpathtools.parser import parse_path
-from svgpathtools.svg2paths import ellipse2pathd, rect2pathd
-
-from sys import argv
-import csv
 
 from brother import Pattern, Stitch, Block, BrotherEmbroideryFile, pattern_to_csv, \
     pattern_to_svg
+
+
+def make_continuous(path):
+    # takes a discontinuous path (like a donut or a figure 8, and slices it together
+    # such that it is continuous
+    cont_paths = path.continuous_subpaths()
+    paths = cont_paths[0][:]
+    for i in range(1, len(cont_paths)):
+        start_point = paths[-1].end
+        previous_point = paths[0].end
+        # find the index of the closest point on the inner circle
+        inner_start_index = sorted([(j, abs(path.start - start_point))
+                                    for j, path in enumerate(cont_paths)],
+                                   key=lambda x: x[1])[0][0]
+        next_start_index = sorted([(j, abs(path.start - previous_point))
+                                   for j, path in enumerate(cont_paths)
+                                   if j != inner_start_index],
+                                  key=lambda x: x[1])[0][0]
+        paths += [Line(start=start_point, end=cont_paths[i][inner_start_index].start)]
+        if next_start_index > inner_start_index:
+            paths += cont_paths[i][inner_start_index:] + cont_paths[0:inner_start_index]
+        else:
+            paths += cont_paths[i][len(
+                cont_paths[i]) - inner_start_index:inner_start_index:-1] + cont_paths[
+                                                                           inner_start_index::-1]
+        paths += [Line(start=cont_paths[-1][inner_start_index].start, end=start_point)]
+    return paths
 
 
 def overall_bbox(paths):
@@ -43,7 +63,50 @@ def overall_bbox(paths):
     return over_bbox
 
 
-def path1_is_contained_in_path2(path1, path2):
+def remove_close_paths(input_paths):
+    def snap_angle(p):
+        hyp = p.length()
+        y_diff = (p.start-p.end).imag
+        if hyp == 0.0:
+            return pi*sign(y_diff)/2.0
+        elif y_diff/hyp > 1.0:
+            return pi/2.0
+        elif y_diff/hyp < -1.0:
+            return pi/2.0
+        else:
+            return asin(y_diff/hyp)
+    paths = [deepcopy(path) for path in input_paths if path.length() > minimum_stitch]
+    # remove any paths that are less than the minimum stitch
+    while len([True for line in paths if line.length() < minimum_stitch]) > 0 \
+            or len([paths[i] for i in range(1, len(paths)) if
+                    paths[i].start != paths[i - 1].end]) > 0:
+        paths = [deepcopy(path) for path in input_paths if path.length() > minimum_stitch]
+        paths = [Line(start=paths[i].start, end=paths[(i + 1) % len(paths)].start)
+                 for i in range(0, len(paths))]
+
+        angles = [snap_angle(p) for p in paths]
+        straight_lines = []
+        current_angle = None
+        current_start = None
+        j = 0
+        while j < len(angles):
+            if current_angle is None:
+                current_angle = angles[0]
+                current_start = paths[j].start
+            while abs(current_angle - angles[j % len(paths)]) < 0.01:
+                j += 1
+            straight_lines.append(Line(start=current_start, end=paths[j % len(paths)].start))
+            current_angle = angles[j % len(angles)]
+            current_start = paths[j % len(paths)].start
+        paths = straight_lines
+
+    assert len(
+        [i for i in range(1, len(paths)) if paths[i].start != paths[i - 1].end]) == 0
+    assert len([True for line in paths if line.length() < minimum_stitch]) == 0
+    return paths
+
+
+def path1_is_contained_in_path2(path1, path2, crosses=False):
     if path2.length() == 0:
         return False
     if path1.start != path1.end:
@@ -59,8 +122,10 @@ def path1_is_contained_in_path2(path1, path2):
     A = path1.start  # pick an arbitrary point in path1
     AB_line = Path(Line(A, B))
     number_of_intersections = len(AB_line.intersect(path2))
-    if number_of_intersections % 2:  # if number of intersections is odd
+    if number_of_intersections % 2 and not crosses:  # if number of intersections is odd
         return True
+    elif crosses and number_of_intersections > 0:
+        return False
     else:
         return False
 
@@ -95,34 +160,52 @@ def get_color(v, part="fill"):
 
 # this script is in mms. The assumed minimum stitch width is 1 mm, the maximum width
 # is 5 mm
-minimum_stitch = 3.0
+minimum_stitch = 1.0
 maximum_stitch = 15.0
 
+DEBUG = False
 
-def initialize_grid(paths):
-    current_grid = defaultdict(dict)
-    bbox = overall_bbox(paths)
-    curr_x = int(bbox[0]/minimum_stitch)*minimum_stitch
-    while curr_x < bbox[1]:
-        curr_y = int(bbox[2]/minimum_stitch)*minimum_stitch
-
-        while curr_y < bbox[3]:
-            test_line = Line(start=curr_x + curr_y * 1j,
-                             end=curr_x + minimum_stitch + (
-                                                           curr_y + minimum_stitch) * 1j)
-            is_contained = path1_is_contained_in_path2(test_line, Path(*paths))
-            if is_contained:
-                current_grid[curr_x][curr_y] = False
-            curr_y += minimum_stitch
-        curr_x += minimum_stitch
-    return current_grid
+def shorter_side(paths):
+    vector_points = [path.point(0.5) for i, path in enumerate(paths) if i < 4]
+    lines = [Line(start=vector_points[0], end=vector_points[2]),
+             Line(start=vector_points[1], end=vector_points[3])]
+    return 1 if lines[0].length() > lines[1].length() else 0
 
 
-def svg_to_pattern(filecontents, debug="debug.svg",
-                   stitches_file='intersection_test.svg'):
+def gen_filename(partial="anim"):
+    return "gen_%s_%s_.svg" % (partial, int(time()*1000))
+
+
+def write_debug(partial, parts):
+    """
+    write a set of shapes to an output file.
+
+    :param partial: the filename part, i.e., if partial is xxxx, then the filename will
+    be gen_xxxx_timestamp.svg
+    :param parts: a list of shapes lists, where the first element of each shape is the
+    svgpathtoolshape, the second value is the fill, and the third value is the stroke color.
+    :return: nothing
+    """
+    if not DEBUG:
+        return
+
+    debug_fh = open(gen_filename(partial), "w")
+    debug_dwg = svgwrite.Drawing(debug_fh, profile='tiny')
+    debug_dwg.write(debug_dwg.filename, pretty=False)
+    for shape in parts:
+        if isinstance(shape[0], Path):
+            debug_dwg.add(debug_dwg.path(d=shape[0].d(), fill=shape[1], stroke=shape[2]))
+        elif isinstance(shape[0], Line):
+            debug_dwg.add(debug_dwg.line(start=(shape[0].start.real, shape[0].start.imag),
+                                         end=(shape[0].end.real, shape[0].end.imag),
+                                         fill=shape[1], stroke=shape[2]))
+        else:
+            print("can't put shape", shape[0], " in debug file")
+    debug_fh.close()
+
+
+def svg_to_pattern(filecontents):
     doc = parseString(filecontents)
-    dwg = svgwrite.Drawing(stitches_file, profile='tiny')
-    debug_dwg = svgwrite.Drawing(debug, profile='tiny')
 
     def add_block(stitches):
         if len(stitches) == 0:
@@ -176,144 +259,36 @@ def svg_to_pattern(filecontents, debug="debug.svg",
     debug_shapes = []
     intersection_shapes = []
 
-    def intersection_diffs(intersection):
-        diffs = []
-        for i in range(len(intersection)):
-            for j in range(len(intersection)):
-                if i == j:
-                    continue
-                diffs.append(abs(intersection[i] - intersection[j]))
-        return diffs
 
-    current_grid = defaultdict(dict)
 
-    def fill_test(paths, stitches):
-        for i in range(1, len(stitches)):
-            x_lower = min(stitches[i-1].xx/scale, stitches[i].xx/scale)
-            x_upper = max(stitches[i-1].xx/scale, stitches[i].xx/scale)
-            y_lower = min(stitches[i-1].yy/scale, stitches[i].yy/scale)
-            y_upper = max(stitches[i-1].yy/scale, stitches[i].yy/scale)
 
-            curr_x = int(x_lower/minimum_stitch)*minimum_stitch
-            while curr_x <= x_upper+minimum_stitch:
-                curr_y = int(y_lower/minimum_stitch)*minimum_stitch
-                while curr_y <= y_upper+minimum_stitch:
-                    if curr_x in current_grid:
-                        if curr_y in current_grid[curr_x]:
-                            current_grid[curr_x][curr_y] = True
-                    curr_y += minimum_stitch
-                curr_x += minimum_stitch
-        last_point = [max(current_grid), 0]
-        all_filled = True
-        for curr_x in current_grid:
-            for curr_y in current_grid[curr_x]:
-                if not current_grid[curr_x][curr_y]:
-                    all_filled = False
-                    if curr_x < last_point[0] and curr_y > last_point[1]:
-                        last_point = [curr_x, curr_y]
-        return all_filled, last_point[0]+last_point[1]*1j
-
-    def draw_fill():
-        colors = ["#dddddd", "#00ff00"]
-        for curr_x in current_grid:
-            for curr_y in current_grid[curr_x]:
-                shape = svgwrite.shapes.Rect(insert=(curr_x, curr_y),
-                                             size=(minimum_stitch, minimum_stitch),
-                                             fill=colors[current_grid[curr_x][curr_y]])
-                intersection_shapes.insert(0, shape)
-
-    def find_intersections(line, v, paths):
-        svg_fill = svgwrite.rgb(fill_color[0], fill_color[1], fill_color[2], '%')
-        intersection_shapes.append(svgwrite.shapes.Line(start=(line.start.real, line.start.imag),
-                                     end=(line.end.real, line.end.imag),
-                                     stroke="black", stroke_width=minimum_stitch * 0.1))
-        intersections = []
-        for path in paths:
-            if path.start == path.end:
-                continue
-
-            intersection_shapes.append(dwg.path(Path(path).d(),
-                             stroke=svgwrite.rgb(fill_color[0], fill_color[1],
-                                                 fill_color[2], '%'), fill="none"))
-            line_intersections = line.intersect(path)
-            for line_intersection in line_intersections:
-                intersection_point = line.point(line_intersection[0])
-                if intersection_point in intersections:
-                    continue
-                intersections.append(intersection_point)
-
-        for intersection in intersections:
-            intersection_shapes.append(dwg.circle(center=(intersection.real, intersection.imag),
-                               r=minimum_stitch * 0.1))
-        # check to see whether the starting position is in the list of intersections
-        diffs = [intersection for intersection in intersections if abs(line.start-intersection) < minimum_stitch]
-        if len(diffs) == 0:
-            intersections = [line.start]+intersections
-
-        # sort the intersections by their distance to the start point
-        intersections = sorted(intersections, key=lambda value: abs(line.start - value))
-        # remove any intersections that are within the minimum stitch from each other
-        diffs = [abs(intersections[i]-intersections[i-1]) for i in range(1, len(intersections))]
-        intersections = [intersections[diff_i] for diff_i in range(len(diffs)) if diffs[diff_i] > minimum_stitch ]+[intersections[-1]]
-        if len(intersections) < 2:
-            raise ValueError("too few intersections")
-
-        intersection_shapes.append(svgwrite.shapes.Line(start=(intersections[0].real, intersections[0].imag),
-                                     end=(intersections[1].real, intersections[1].imag),
-                                     stroke=svg_fill, stroke_width=minimum_stitch * 0.1))
-
-        return intersections[1]
 
     def fill_polygon(paths):
+        def fill_trap(paths,color="gray"):
+            side = shorter_side(paths)
+            shapes = [[Path(*paths), "none", "black"], [Path(*paths[side:side+3]), color, "none"]]
+            side2 = side+2
+            shapes = fill_shape(side, side2, paths, shapes)
+            write_debug("fill", shapes)
+            return side, side2
 
-        def remove_close_paths():
-            # remove any paths that are less than the minimum stitch
-            i = 0
-            while i < len(paths):
-                if paths[i].length() < minimum_stitch:
-                    del paths[i]
-                    # confirm that the points merge
-                    i = i % len(paths)
-                    paths[i].start = paths[i-1].end
-                else:
-                    i += 1
-
-
-        def gen_filename():
-            return "anim_%s_.svg" % int(time()*1000)
-
-        def fill_trap(paths):
-            vector_points = [path.point(0.5) for i, path in enumerate(paths) if i < 4]
-            lines = [Line(start=vector_points[0], end=vector_points[2]), Line(start=vector_points[1], end=vector_points[3])]
-            side = 1 if lines[0].length() > lines[1].length() else 0
-            fill_shape(side, side+2, paths)
-            return side
-
-        def fill_shape(side1, side2, paths):
+        def fill_shape(side1, side2, paths, shapes):
             if paths[side1].length() == 0:
                 return
-            increment = minimum_stitch/paths[side1].length()
+            increment = 3*minimum_stitch/paths[side1].length()
             current_t = 0
             # make closed shape
+
             filled_paths = [paths[side1], paths[side2]]
             if filled_paths[0].end != filled_paths[1].start:
                 filled_paths.insert(1, Line(start=filled_paths[0].end, end=filled_paths[1].start))
             if filled_paths[0].start != filled_paths[-1].end:
                 filled_paths.append(Line(start=filled_paths[-1].end,
                                             end=filled_paths[0].start))
-            color = "red" if len(filled_paths) == 3 else "green"
-            anim_shapes.append(anim_dwg.path(d=Path(*filled_paths).d(), fill=color))
             while current_t < 1.0-increment*0.5:
                 point1 = paths[side1].point(current_t)
                 point2 = paths[side2].point(1-(current_t+0.5*increment))
                 point3 = paths[side1].point(current_t+increment)
-                debug_shapes.append(debug_dwg.line(start=(point1.real, point1.imag),
-                                                   end=(point2.real, point2.imag), stroke="orange"))
-                anim_shapes.append(debug_shapes[-1])
-                debug_shapes.append(debug_dwg.line(start=(point2.real, point2.imag),
-                                                   end=(point3.real, point3.imag),
-                                                   stroke="orange"))
-                anim_shapes.append(debug_shapes[-1])
                 to = Stitch(["STITCH"], point1.real * scale, point1.imag * scale,
                             color=fill_color)
                 stitches.append(to)
@@ -324,14 +299,19 @@ def svg_to_pattern(filecontents, debug="debug.svg",
                 to = Stitch(["STITCH"], point3.real * scale, point3.imag * scale,
                             color=fill_color)
                 stitches.append(to)
+            shapes.append([paths[side1], "none", "orange"])
+            shapes.append([paths[side2], "none", "red"])
+            return shapes
 
-        def fill_triangle(paths):
+        def fill_triangle(paths, color="green"):
             triangle_sides = [paths[0], paths[1], Line(start=paths[2].start, end=paths[0].start)]
+            shapes = [[Path(*paths), "none", "black"], [Path(*triangle_sides), color, "none"]]
             lengths = [p.length() for p in triangle_sides]
             side1 = argmax(lengths)
             lengths[side1] = 0
             side2 = argmax(lengths)
-            fill_shape(side1, side2, triangle_sides)
+            shapes = fill_shape(side1, side2, triangle_sides, shapes)
+            write_debug("fill", shapes)
 
         def is_concave(paths):
             xs = [path.start.real for i, path in enumerate(paths) if i < 4]
@@ -345,133 +325,109 @@ def svg_to_pattern(filecontents, debug="debug.svg",
             return False
         rotated = 0
         fudge_factor = 0.03
-        anim_fh = open(gen_filename(), "w")
-        anim_dwg = svgwrite.Drawing(anim_fh, profile='tiny')
-        anim_shapes = []
         while len(paths) > 2:
             if len(paths) < 4:
-                fill_triangle(paths)
+                fill_triangle(paths, color="red")
                 return
-            remove_close_paths()
+            shapes = [[Path(*paths), "none", "blue"], [Path(*paths), "none", "green"]]
+            write_debug("close", shapes)
+            paths = remove_close_paths(paths)
+
+            if len(paths) <= 2:
+                return
             # check whether the next triangle is concave
-            test_line = Line(start=paths[0].start, end=paths[1].end)
-            test_line = Line(start=test_line.point(fudge_factor),
-                             end=test_line.point(1 - fudge_factor))
+            test_line1 = Line(start=paths[0].start, end=paths[1].end)
+            test_line1 = Line(start=test_line1.point(fudge_factor),
+                             end=test_line1.point(1 - fudge_factor))
             comparison_path = Path(*paths)
-            if not path1_is_contained_in_path2(test_line, Path(*paths)):
+            has_intersection = len([1 for line in paths if len(line.intersect(test_line1)) > 0]) > 0
+
+            if not path1_is_contained_in_path2(test_line1, comparison_path) or has_intersection:
+                anim_fh = open(gen_filename(), "w")
+                anim_shapes = []
+                anim_dwg = svgwrite.Drawing(anim_fh, profile='tiny')
+
+                anim_dwg.add(anim_dwg.path(d=comparison_path.d(),
+                                           fill="none", stroke="blue"))
+                anim_dwg.add(
+                    anim_dwg.line(start=(test_line1.start.real, test_line1.start.imag),
+                                  end=(test_line1.end.real, test_line1.end.imag),
+                                  fill="none", stroke="black"))
+                anim_dwg.write(anim_dwg.filename, pretty=False)
+                anim_fh.close()
                 # rotate the paths
                 paths = paths[1:]+[paths[0]]
                 rotated += 1
                 if rotated >= len(paths):
-                    print("failed to rotate into a concave path -> ", (test_line.start.real, test_line.start.imag), (test_line.end.real, test_line.end.imag), [(p.start.real, p.start.imag) for p in paths])
+                    print("failed to rotate into a concave path -> ", (test_line1.start.real, test_line1.start.imag), (test_line1.end.real, test_line1.end.imag), [(p.start.real, p.start.imag) for p in paths])
                     debug_shapes.append(
-                        debug_dwg.line(start=(test_line.start.real, test_line.start.imag),
-                                       end=(test_line.end.real, test_line.end.imag),
+                        debug_dwg.line(start=(test_line1.start.real, test_line1.start.imag),
+                                       end=(test_line1.end.real, test_line1.end.imag),
                                        stroke="blue"))
                     debug_shapes.append(
                         debug_dwg.path(d=comparison_path.d(),
                                        stroke="black", fill="none"))
                     return
                 continue
+            side = shorter_side(paths)
 
-            test_line = Line(start=paths[1].start, end=paths[2].end)
-            test_line = Line(start=test_line.point(fudge_factor),
-                             end=test_line.point(1 - fudge_factor))
-            rect_not_concave = not path1_is_contained_in_path2(test_line, comparison_path)
+            test_line2 = Line(start=paths[1].start, end=paths[2].end)
+            test_line2 = Line(start=test_line2.point(fudge_factor),
+                             end=test_line2.point(1 - fudge_factor))
+            test_line3 = Line(start=paths[-1+side].end, end=paths[(3+side) % len(paths)].start)
+            test_line3 = Line(start=test_line3.point(fudge_factor),
+                              end=test_line3.point(1 - fudge_factor))
+
+            num_intersections = []
+            for path in comparison_path:
+                num_intersections += test_line3.intersect(path)
+                num_intersections += test_line2.intersect(path)
+
+            rect_not_concave = not path1_is_contained_in_path2(test_line2, comparison_path)
 
             # test for concavity. If concave, fill as triangle
-            if is_concave(paths) or rect_not_concave:
-                fill_triangle(paths)
+            if is_concave(paths) or len(num_intersections) > 0 or rect_not_concave:
+                fill_triangle(paths, color="blue")
+                shapes = [[Path(*paths), "none", "black"]]
                 to_remove = []
                 to_remove.append(paths.pop(0))
                 to_remove.append(paths.pop(0))
                 for shape in to_remove:
-                    anim_shapes.append(anim_dwg.line(start=(shape.start.real, shape.start.imag), end=(shape.end.real, shape.end.imag), fill="none", stroke="blue"))
+                    shapes.append([shape, "none", "blue"])
+                closing_line = Line(start=paths[-1].end, end=paths[0].start)
+                shapes.append([closing_line, "none", "green"])
+                shapes.append([test_line1, "none", "red"])
+                write_debug("rem", shapes)
+
             else:
                 # check whether the next triangle is concave
-                side = fill_trap(paths)
+                side, side2 = fill_trap(paths)
                 if side:
                     paths = paths[1:]+[paths[0]]
+                shapes = [[Path(*paths), "none", "black"]]
                 to_remove = []
+                to_remove.append(paths.pop(0))
                 to_remove.append(paths.pop(0))
                 to_remove.append(paths.pop(0))
                 # if the trap was stitched in the vertical (perpendicular to the
                 # stitches), don't remove that segment
-                if not side:
-                    to_remove.append(paths.pop(0))
                 linecolors = ["blue", "purple", "pink"]
-                for i, shape in enumerate(to_remove):
-                    anim_shapes.append(
-                        anim_dwg.line(start=(shape.start.real, shape.start.imag),
-                                      end=(shape.end.real, shape.end.imag), fill="none",
-                                      stroke=linecolors[i]))
+                for i,shape in enumerate(to_remove):
+                    shapes.append([shape, "none", linecolors[i]])
+                closing_line = Line(start=paths[-1].end, end=paths[0].start)
+                shapes.append([closing_line, "none", "green"])
+                shapes.append([test_line2, "none", "purple"])
+                write_debug("rem", shapes)
+                delta = closing_line.length()-(test_line3.length()/(1.0-2.0*fudge_factor))
+                if abs(delta) > 1e-14:
+                    print("closing line different than test!", side, test_line3, closing_line)
             rotated = 0
             if paths[-1].end != paths[0].start:
                 # check for intersections
                 closing_line = Line(start=paths[-1].end, end=paths[0].start)
-                start_point = paths[-1].end
-                intersections = []
-                for i, path in enumerate(paths):
-                    if path.length() == 0:
-                        continue
-                    if path.start == closing_line.start and path.end == closing_line.end:
-                        continue
-                    path_intersections = closing_line.intersect(path)
-                    if len(path_intersections) > 0:
-                        intersections += [(i, p) for p in path_intersections]
-
-                if len(intersections)> 0:
-                    closing_lines = []
-                    # I think, but have not proven, that there will always be mod 2
-                    # number of intersections
-                    for i in range(0, len(intersections)-1, 2):
-                        closing_lines.append(Line(start=start_point,
-                                                  end=intersections[i][1][0]+intersections[i][1][1]*1j))
-                        int_section = intersections[i][0]+1
-                        while abs(intersections[i+1][0]-int_section) > 1:
-                            if intersections[i+1][0]-int_section > 0:
-                                closing_lines.append(paths[int_section])
-                                int_section += 1
-                            else:
-                                closing_lines.append(paths[int_section].reverse())
-                                int_section -= 1
-                        if intersections[i + 1][0] - int_section > 0:
-                            closing_lines.append(Line(start = paths[intersections[i+1][0]].start,
-                                                      end=intersections[i+1][1][0]+intersections[i+1][1][1]*1j))
-                            start_point = intersections[i+1][1][0]+intersections[i+1][1][1]*1j
-                        else:
-                            closing_lines.append(
-                                Line(start=paths[intersections[i + 1][0]].start,
-                                     end=intersections[i + 1][1][0]+intersections[i+1][1][1]*1j))
-                            start_point = paths[intersections[i + 1][0]].start
-                    closing_lines.append(Line(start=closing_lines[-1].end,
-                                              end=paths[-1].start))
-                    paths += closing_lines
-                else:
-                    paths.insert(0, closing_line)
-
-            anim_shapes.append(anim_dwg.path(d=Path(*paths).d(), fill="none", stroke="black"))
-            for shape in anim_shapes:
-                anim_dwg.add(shape)
-            anim_dwg.write(anim_dwg.filename, pretty=False)
-            anim_fh.close()
-            anim_fh = open(gen_filename(), "w")
-            anim_dwg = svgwrite.Drawing(anim_fh, profile='tiny')
-            anim_shapes = []
-
-    def make_continuous(path):
-        # takes a discontinuous path (like a donut or a figure 8, and slices it together
-        # such that it is continuous
-        cont_paths = path.continuous_subpaths()
-        paths = cont_paths[0][:]
-        for i in range(1, len(cont_paths)):
-            start_point = paths[-1].end
-            paths += [Line(start=start_point, end=cont_paths[i].start)]
-            paths += cont_paths[i][:]
-            paths += [Line(start=cont_paths[-1].end, end=start_point)]
-        full_path = Path(*paths)
-        debug_shapes.append(debug_dwg.path(d=full_path.d(), stroke="blue", fill="none"))
-        return paths
+                paths.insert(0, closing_line)
+            else:
+                print("removed paths but they connected anyway")
 
     def switch_color(stitches, new_color):
         if last_color is not None and last_color != new_color and len(stitches) > 0:
@@ -540,15 +496,6 @@ def svg_to_pattern(filecontents, debug="debug.svg",
             last_color = stroke_color
         add_block(stitches)
 
-    for shape in intersection_shapes:
-        dwg.add(shape)
-
-    for shape in debug_shapes:
-        debug_dwg.add(shape)
-
-    debug_dwg.write(debug_dwg.filename, pretty=False)
-    dwg.write(dwg.filename, pretty=False)
-
     last_stitch = pattern.blocks[-1].stitches[-1]
     pattern.add_block(
         Block(stitches=[Stitch(["END"], last_stitch.xx, last_stitch.yy)],
@@ -581,8 +528,8 @@ def upload(pes_filename):
     if mount_destination is None:
         print("could not find brother embroidery machine to transfer to")
     else:
-        statvfs = statvfs(mount_destination)
-        if getsize(pes_filename) > statvfs.f_frsize * statvfs.f_bavail:
+        _statvfs = statvfs(mount_destination)
+        if getsize(pes_filename) > _statvfs.f_frsize * _statvfs.f_bavail:
             print("file cannot be transfered - not enough space on device")
         else:
             copyfile(pes_filename, join(mount_destination, basename(pes_filename)))
@@ -590,11 +537,9 @@ def upload(pes_filename):
 
 if __name__ == "__main__":
     start = time()
-    filename = "d.svg"
+    filename = "dagga_logo_outline.svg"
     filecontents = open(join("workspace", filename), "r").read()
-    debug_fh = open("debug_%s_.svg" % time(), "w")
-    stitches_fh = open("intersection_test.svg", "w")
-    pattern = svg_to_pattern(filecontents, debug_fh, stitches_fh)
+    pattern = svg_to_pattern(filecontents)
     end = time()
     print("digitizer time: %s" % (end - start))
     pattern_to_csv(pattern, filename + ".csv")

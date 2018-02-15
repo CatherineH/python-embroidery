@@ -256,12 +256,6 @@ def svg_to_pattern(filecontents):
 
     last_color = None
     stitches = []
-    debug_shapes = []
-    intersection_shapes = []
-
-
-
-
 
     def fill_polygon(paths):
         def fill_trap(paths,color="gray"):
@@ -360,13 +354,6 @@ def svg_to_pattern(filecontents):
                 rotated += 1
                 if rotated >= len(paths):
                     print("failed to rotate into a concave path -> ", (test_line1.start.real, test_line1.start.imag), (test_line1.end.real, test_line1.end.imag), [(p.start.real, p.start.imag) for p in paths])
-                    debug_shapes.append(
-                        debug_dwg.line(start=(test_line1.start.real, test_line1.start.imag),
-                                       end=(test_line1.end.real, test_line1.end.imag),
-                                       stroke="blue"))
-                    debug_shapes.append(
-                        debug_dwg.path(d=comparison_path.d(),
-                                       stroke="black", fill="none"))
                     return
                 continue
             side = shorter_side(paths)

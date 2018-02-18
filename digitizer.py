@@ -1,5 +1,4 @@
 from collections import defaultdict
-from copy import deepcopy
 from math import asin
 from os import statvfs
 from os.path import join, basename, getsize
@@ -17,7 +16,7 @@ from numpy import argmax, pi, ceil, sign
 from svgpathtools import svgdoc2paths, Line, wsvg, Arc, Path, QuadraticBezier, CubicBezier
 
 from brother import Pattern, Stitch, Block, BrotherEmbroideryFile, pattern_to_csv, \
-    pattern_to_svg
+    pattern_to_svg, nearest_color
 
 
 def make_continuous(path):
@@ -140,18 +139,27 @@ def distance(point1, point2):
 
 
 def get_color(v, part="fill"):
+    """
+    In most svg renderers, if a color is unset, it will be rendered as black. This is
+    different from the fill being none, or transparent.
+    :param v: the dictionary of attributes from the xml tag
+    :param part: the attribute that we're looking for.
+    :return: a three item tuple
+    """
     if not isinstance(v, dict):
-        return None
+        return [0, 0, 0]
     if "style" not in v:
         if part in v:
             if v[part] in css2_names_to_hex:
                 return hex_to_rgb(css2_names_to_hex[v[part]])
             elif v[part][0] == "#":
                 return hex_to_rgb(v[part])
+            elif v[part] == "none":
+                return "none"
             else:
-                return None
+                return [0, 0, 0]
         else:
-            return None
+            return [0, 0, 0]
     if v['style'].find(part + ':') >= 0:
         color = v['style'].split(part + ':')[1].split(";")[0]
         if color[0] == '#':
@@ -160,17 +168,17 @@ def get_color(v, part="fill"):
             return None
         else:
             print("not sure what to do with color: %s" % color)
-            return None
+            return [0, 0, 0]
     else:
         # the color is black
-        return None
+        return [0, 0, 0]
 
 
 def sort_paths(paths, attributes):
     # sort paths by colors/ position.
     paths_by_color = defaultdict(list)
     for k, v in enumerate(attributes):
-        stroke_color = get_color(v, "stroke")
+        stroke_color = nearest_color(get_color(v, "stroke"))
         paths_by_color[stroke_color].append(k)
     output_paths = []
     output_attributes = []
@@ -267,6 +275,7 @@ def svg_to_pattern(filecontents):
 
     viewbox = root.getAttribute('viewBox')
     all_paths, attributes = sort_paths(*svgdoc2paths(doc))
+    print(len(all_paths))
 
     if root_width is not None:
         root_width = root_width.value
@@ -472,6 +481,7 @@ def svg_to_pattern(filecontents):
         # first, look for the color from the fill
         fill_color = get_color(v, "fill")
         stroke_color = get_color(v, "stroke")
+        # if both the fill color and stroke color are none,
         if fill_color is not None:
             if len(pattern.blocks) == 0 and fill_color is not None:
                 pattern.add_block(Block([Stitch(["JUMP"], 0, 0)], color=fill_color))
@@ -514,10 +524,11 @@ def svg_to_pattern(filecontents):
         if len(stitches) > 0:
             last_color = stroke_color
     add_block(stitches)
-    last_stitch = pattern.blocks[-1].stitches[-1]
-    pattern.add_block(
-        Block(stitches=[Stitch(["END"], last_stitch.xx, last_stitch.yy)],
-              color=pattern.blocks[-1].color))
+    if len(pattern.blocks[-1].stitches) > 0:
+        last_stitch = pattern.blocks[-1].stitches[-1]
+        pattern.add_block(
+            Block(stitches=[Stitch(["END"], last_stitch.xx, last_stitch.yy)],
+                color=pattern.blocks[-1].color))
 
     return pattern
 
@@ -555,7 +566,7 @@ def upload(pes_filename):
 
 if __name__ == "__main__":
     start = time()
-    filename = "path_test.svg"
+    filename = "text.svg"
     filecontents = open(join("workspace", filename), "r").read()
     pattern = svg_to_pattern(filecontents)
     end = time()

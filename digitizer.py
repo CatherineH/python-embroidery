@@ -14,7 +14,7 @@ from webcolors import hex_to_rgb
 
 import svgwrite
 from numpy import argmax, pi, ceil, sign
-from svgpathtools import svgdoc2paths, Line, wsvg, Arc, Path, QuadraticBezier
+from svgpathtools import svgdoc2paths, Line, wsvg, Arc, Path, QuadraticBezier, CubicBezier
 
 from brother import Pattern, Stitch, Block, BrotherEmbroideryFile, pattern_to_csv, \
     pattern_to_svg
@@ -64,6 +64,12 @@ def overall_bbox(paths):
 
 
 def remove_close_paths(input_paths):
+    if len(input_paths) == 1:
+        if input_paths[0].length() < minimum_stitch:
+            return []
+        else:
+            return  input_paths
+    #starts_closed = Path(*input_paths).iscontinuous() and input_paths[-1].end == input_paths[0].start
     def snap_angle(p):
         hyp = p.length()
         y_diff = (p.start-p.end).imag
@@ -75,12 +81,12 @@ def remove_close_paths(input_paths):
             return pi/2.0
         else:
             return asin(y_diff/hyp)
-    paths = [deepcopy(path) for path in input_paths if path.length() > minimum_stitch]
+    paths = [path for path in input_paths if path.length() > minimum_stitch]
     # remove any paths that are less than the minimum stitch
     while len([True for line in paths if line.length() < minimum_stitch]) > 0 \
             or len([paths[i] for i in range(1, len(paths)) if
                     paths[i].start != paths[i - 1].end]) > 0:
-        paths = [deepcopy(path) for path in input_paths if path.length() > minimum_stitch]
+        paths = [path for path in paths if path.length() >= minimum_stitch]
         paths = [Line(start=paths[i].start, end=paths[(i + 1) % len(paths)].start)
                  for i in range(0, len(paths))]
 
@@ -99,7 +105,6 @@ def remove_close_paths(input_paths):
             current_angle = angles[j % len(angles)]
             current_start = paths[j % len(paths)].start
         paths = straight_lines
-
     assert len(
         [i for i in range(1, len(paths)) if paths[i].start != paths[i - 1].end]) == 0
     assert len([True for line in paths if line.length() < minimum_stitch]) == 0
@@ -135,6 +140,8 @@ def distance(point1, point2):
 
 
 def get_color(v, part="fill"):
+    if not isinstance(v, dict):
+        return None
     if "style" not in v:
         if part in v:
             if v[part] in css2_names_to_hex:
@@ -158,12 +165,47 @@ def get_color(v, part="fill"):
         # the color is black
         return None
 
+
+def sort_paths(paths, attributes):
+    # sort paths by colors/ position.
+    paths_by_color = defaultdict(list)
+    for k, v in enumerate(attributes):
+        stroke_color = get_color(v, "stroke")
+        paths_by_color[stroke_color].append(k)
+    output_paths = []
+    output_attributes = []
+    for color in paths_by_color:
+        # paths_to_add is a list of indexes of paths in the paths input
+        paths_to_add = paths_by_color[color]
+        block_bbox = overall_bbox([paths[k] for k in paths_to_add])
+        start_location = block_bbox[0] + block_bbox[2] * 1j
+        paths_to_add = [(x,0) for x in paths_to_add]+[(x, 1) for x in paths_to_add]
+        while len(paths_to_add) > 0:
+            # sort the paths by their distance to the top left corner of the block
+            paths_to_add = sorted(paths_to_add,
+                                  key=lambda x: abs(start_location-paths[x[0]].point(x[1])))
+            path_to_add = paths_to_add.pop(0)
+            output_paths.append(paths[path_to_add[0]] if path_to_add[1]
+                                else paths[path_to_add[0]].reversed())
+            assert output_paths[-1] is not None
+            output_attributes.append(attributes[path_to_add[0]])
+            # filter out the reverse path
+            paths_to_add = [p for p in paths_to_add if p[0] != path_to_add[0]]
+            start_location = paths[path_to_add[0]].start if path_to_add[0] else paths[path_to_add[1]].end
+    # confirm that we haven't abandoned any paths
+    assert len(output_paths) == len(paths)
+    assert len(output_attributes) == len(attributes)
+    assert len(output_attributes) == len(output_paths)
+    return output_paths, output_attributes
+
+
 # this script is in mms. The assumed minimum stitch width is 1 mm, the maximum width
 # is 5 mm
 minimum_stitch = 1.0
-maximum_stitch = 15.0
+maximum_stitch = 3.0
 
 DEBUG = False
+
 
 def shorter_side(paths):
     vector_points = [path.point(0.5) for i, path in enumerate(paths) if i < 4]
@@ -224,7 +266,8 @@ def svg_to_pattern(filecontents):
     root_width = root.attributes.getNamedItem('width')
 
     viewbox = root.getAttribute('viewBox')
-    all_paths, attributes = svgdoc2paths(doc)
+    all_paths, attributes = sort_paths(*svgdoc2paths(doc))
+
     if root_width is not None:
         root_width = root_width.value
         if root_width.find("mm") > 0:
@@ -334,21 +377,14 @@ def svg_to_pattern(filecontents):
             test_line1 = Line(start=test_line1.point(fudge_factor),
                              end=test_line1.point(1 - fudge_factor))
             comparison_path = Path(*paths)
-            has_intersection = len([1 for line in paths if len(line.intersect(test_line1)) > 0]) > 0
+            if test_line1.length() == 0:
+                has_intersection = True
+            else:
+                has_intersection = len([1 for line in paths if len(line.intersect(test_line1)) > 0]) > 0
 
             if not path1_is_contained_in_path2(test_line1, comparison_path) or has_intersection:
-                anim_fh = open(gen_filename(), "w")
-                anim_shapes = []
-                anim_dwg = svgwrite.Drawing(anim_fh, profile='tiny')
-
-                anim_dwg.add(anim_dwg.path(d=comparison_path.d(),
-                                           fill="none", stroke="blue"))
-                anim_dwg.add(
-                    anim_dwg.line(start=(test_line1.start.real, test_line1.start.imag),
-                                  end=(test_line1.end.real, test_line1.end.imag),
-                                  fill="none", stroke="black"))
-                anim_dwg.write(anim_dwg.filename, pretty=False)
-                anim_fh.close()
+                shapes = [[comparison_path, "none", "blue"], [test_line1, "none", "black"]]
+                write_debug("anim", shapes)
                 # rotate the paths
                 paths = paths[1:]+[paths[0]]
                 rotated += 1
@@ -367,6 +403,8 @@ def svg_to_pattern(filecontents):
 
             num_intersections = []
             for path in comparison_path:
+                if test_line3.length() == 0:
+                    print("test line 3 is degenerate!")
                 num_intersections += test_line3.intersect(path)
                 num_intersections += test_line2.intersect(path)
 
@@ -418,6 +456,7 @@ def svg_to_pattern(filecontents):
 
     def switch_color(stitches, new_color):
         if last_color is not None and last_color != new_color and len(stitches) > 0:
+            add_block(stitches)
             to = stitches[-1]
             block = Block(stitches=[Stitch(["TRIM"], to.xx, to.yy)],
                           color=last_color)
@@ -432,44 +471,37 @@ def svg_to_pattern(filecontents):
         paths = all_paths[k]
         # first, look for the color from the fill
         fill_color = get_color(v, "fill")
-        if fill_color == None:
-            fill_color = [0, 0, 0]
         stroke_color = get_color(v, "stroke")
-        if len(pattern.blocks) == 0 and fill_color is not None:
-            pattern.add_block(Block([Stitch(["JUMP"], 0, 0)], color=fill_color))
-        stitches = switch_color(stitches, fill_color)
-        full_path = Path(*paths)
-        if not full_path.iscontinuous():
-            print("path not continuous")
-            fill_polygon(make_continuous(full_path))
-        else:
-            fill_polygon(paths)
-        last_color = fill_color
-        add_block(stitches)
+        if fill_color is not None:
+            if len(pattern.blocks) == 0 and fill_color is not None:
+                pattern.add_block(Block([Stitch(["JUMP"], 0, 0)], color=fill_color))
+            stitches = switch_color(stitches, fill_color)
+            full_path = Path(*paths)
+            if not full_path.iscontinuous():
+                print("path not continuous")
+                fill_polygon(make_continuous(full_path))
+            else:
+                fill_polygon(paths)
+            last_color = fill_color
+        if fill_color is not None:
+            add_block(stitches)
         # then do the stroke
         if stroke_color is None:
             continue
         stitches = switch_color(stitches, stroke_color)
+        #paths = remove_close_paths(paths)
         for i, path in enumerate(paths):
             if path.length() == 0:
                 continue
             to = Stitch(["STITCH"], path.start.real * scale,
                         path.start.imag * scale, color=stroke_color)
             stitches.append(to)
-            # look for intermediary control points
-            if isinstance(path, QuadraticBezier):
-                # stitch is curved, add an intermediary point
-                control_stitch = Stitch(["STITCH"], path.point(0.5).real * scale,
-                                        path.point(0.5).imag * scale, color=stroke_color)
+            num_segments = ceil(path.length()/maximum_stitch)
+            for seg_i in range(int(num_segments+1)):
+                control_stitch = Stitch(["STITCH"], path.point(seg_i/num_segments).real * scale,
+                                    path.point(seg_i/num_segments).imag * scale, color=stroke_color)
                 stitches.append(control_stitch)
-            elif isinstance(path, Arc):
-                # if it's an arc, it's really hard to tell where to put the control
-                # points. Instead, let's use the maximum stitch as a guide
-                num_segments = ceil(path.length()/maximum_stitch)
-                for seg_i in range(int(num_segments+1)):
-                    control_stitch = Stitch(["STITCH"], path.point(seg_i/num_segments).real * scale,
-                                        path.point(seg_i/num_segments).imag * scale, color=stroke_color)
-                    stitches.append(control_stitch)
+
             # if the next stitch doesn't start at the end of this stitch, add that one as
             # well
             end_stitch = Stitch(["STITCH"], path.end.real * scale,
@@ -481,8 +513,7 @@ def svg_to_pattern(filecontents):
                 stitches.append(end_stitch)
         if len(stitches) > 0:
             last_color = stroke_color
-        add_block(stitches)
-
+    add_block(stitches)
     last_stitch = pattern.blocks[-1].stitches[-1]
     pattern.add_block(
         Block(stitches=[Stitch(["END"], last_stitch.xx, last_stitch.yy)],
@@ -524,7 +555,7 @@ def upload(pes_filename):
 
 if __name__ == "__main__":
     start = time()
-    filename = "dagga_logo_outline.svg"
+    filename = "path_test.svg"
     filecontents = open(join("workspace", filename), "r").read()
     pattern = svg_to_pattern(filecontents)
     end = time()
@@ -533,3 +564,4 @@ if __name__ == "__main__":
     pattern_to_svg(pattern, filename + ".svg")
     bef = BrotherEmbroideryFile(filename + ".pes")
     bef.write_pattern(pattern)
+    upload(filename+".pes")

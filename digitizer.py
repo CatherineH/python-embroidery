@@ -6,7 +6,13 @@ from shutil import copyfile
 from xml.dom.minidom import parseString
 from time import time
 
+import potrace
+from potrace import BezierSegment, CornerSegment
+
 import webcolors
+from PIL import Image
+from StringIO import StringIO
+import numpy
 
 css2_names_to_hex = webcolors.css2_names_to_hex
 from webcolors import hex_to_rgb
@@ -155,7 +161,7 @@ def get_color(v, part="fill"):
             elif v[part][0] == "#":
                 return hex_to_rgb(v[part])
             elif v[part] == "none":
-                return "none"
+                return None
             else:
                 return [0, 0, 0]
         else:
@@ -241,7 +247,6 @@ def write_debug(partial, parts):
 
     debug_fh = open(gen_filename(partial), "w")
     debug_dwg = svgwrite.Drawing(debug_fh, profile='tiny')
-    debug_dwg.write(debug_dwg.filename, pretty=False)
     for shape in parts:
         if isinstance(shape[0], Path):
             debug_dwg.add(debug_dwg.path(d=shape[0].d(), fill=shape[1], stroke=shape[2]))
@@ -251,23 +256,94 @@ def write_debug(partial, parts):
                                          fill=shape[1], stroke=shape[2]))
         else:
             print("can't put shape", shape[0], " in debug file")
+    debug_dwg.write(debug_dwg.filename, pretty=False)
     debug_fh.close()
+
+
+def posturize(_image):
+    pixels = defaultdict(list)
+    for i, pixel in enumerate(_image.getdata()):
+        x = i % _image.size[0]
+        y = int(i/_image.size[0])
+        if len(pixel) > 3:
+            if pixel[3] == 255:
+                pixels[nearest_color(pixel)].append((x,y, pixel))
+        else:
+            pixels[nearest_color(pixel)].append((x, y, pixel))
+    return pixels
+
+
+def cros_stitch_to_pattern(_image):
+    # this doesn't work well for images with more than 2-3 colors
+    max_dimension = max(_image.size)
+    pixel_ratio = int(max_dimension*minimum_stitch/(4*25.4))
+    if pixel_ratio != 0:
+        _image = _image.resize((_image.size[0]/pixel_ratio, _image.size[1]/pixel_ratio))
+    pixels = posturize(_image)
+
+    paths = []
+    attrs = []
+
+    for color in pixels:
+        for pixel in pixels[color]:
+            rgb = "#%02x%02x%02x" % (pixel[2][0], pixel[2][1], pixel[2][2])
+            x = pixel[0]
+            y = pixel[1]
+            attrs.append({"fill": "none", "stroke": rgb})
+
+            '''
+            paths.append(Path(Line(start=x+1j*y, end=x+0.5*minimum_stitch+1j*(y+minimum_stitch)),
+                Line(end=x+0.5*minimum_stitch + 1j * (y+minimum_stitch),
+                     start=x + minimum_stitch + 1j * y)))
+            '''
+            paths.append(Path(Line(start=x + 1j * y,
+                                   end=x + 0.5 * minimum_stitch + 1j * (y + minimum_stitch))))
+    debug_paths = [[path, attrs[i]["fill"], attrs[i]["stroke"]] for i, path in enumerate(paths)]
+    write_debug("png", debug_paths)
+    return generate_pattern(paths, attrs, 1.0)
+
+
+def image_to_pattern(filecontents):
+    output = StringIO()
+    output.write(filecontents)
+    _image = Image.open(output)
+    pixels = posturize(_image)
+    output_paths = []
+    attributes = []
+    for color in pixels:
+        data = numpy.zeros(_image.size, numpy.uint32)
+        for pixel in pixels[color]:
+            data[pixel[1], pixel[0]] = 1
+        # Create a bitmap from the array
+        bmp = potrace.Bitmap(data)
+        # Trace the bitmap to a path
+        path = bmp.trace()
+        # Iterate over path curves
+        for curve in path:
+            svg_paths = []
+            start_point = curve.start_point
+            for segment in curve:
+                if isinstance(segment, BezierSegment):
+                    svg_paths.append(CubicBezier(start=start_point[0]+1j*start_point[1],
+                                                 control1=segment.c1[0]+segment.c1[1]*1j,
+                                                 control2=segment.c2[0] + segment.c2[1] * 1j,
+                                                 end=segment.end_point[0]+1j*segment.end_point[1]))
+                elif isinstance(segment, CornerSegment):
+                    svg_paths.append(Line(start=start_point[0] + 1j * start_point[1],
+                                    end=segment.c[0] + segment.c[1] * 1j))
+                    svg_paths.append(Line(start=segment.c[0] + segment.c[1] * 1j,
+                                    end=segment.end_point[0] + 1j * segment.end_point[1]))
+                else:
+                    print("not sure what to do with: ", segment)
+                start_point = segment.end_point
+            output_paths.append(Path(*svg_paths))
+            rgb = "#%02x%02x%02x" % (pixels[color][-1][2][0], pixels[color][-1][2][1], pixels[color][-1][2][2])
+            attributes.append({"fill": "none", "stroke": rgb})
+    return generate_pattern(output_paths, attributes, 1.0)
 
 
 def svg_to_pattern(filecontents):
     doc = parseString(filecontents)
-
-    def add_block(stitches):
-        if len(stitches) == 0:
-            print("got no stitches in add block!")
-            return []
-        if last_color is not None:
-            block = Block(stitches=stitches, color=last_color)
-            pattern.add_block(block)
-
-        else:
-            print("last color was none, not adding the block")
-        return []
 
     # make sure the document size is appropriate
     root = doc.getElementsByTagName('svg')[0]
@@ -303,7 +379,22 @@ def svg_to_pattern(filecontents):
         scale = size / width
     else:
         scale = size / height
+    return generate_pattern(all_paths, attributes, scale)
 
+
+def generate_pattern(all_paths, attributes, scale):
+
+    def add_block(stitches):
+        if len(stitches) == 0:
+            print("got no stitches in add block!")
+            return []
+        if last_color is not None:
+            block = Block(stitches=stitches, color=last_color)
+            pattern.add_block(block)
+
+        else:
+            print("last color was none, not adding the block")
+        return []
     pattern = Pattern()
 
     last_color = None
@@ -566,6 +657,19 @@ def upload(pes_filename):
 
 if __name__ == "__main__":
     start = time()
+    filename = "trump_pillow_trans.png"
+    filecontents = open(join("workspace", filename), "r").read()
+    pattern = image_to_pattern(filecontents)
+    end = time()
+    print("digitizer time: %s" % (end - start))
+    pattern_to_csv(pattern, filename + ".csv")
+    pattern_to_svg(pattern, filename + ".svg")
+    bef = BrotherEmbroideryFile(filename + ".pes")
+    bef.write_pattern(pattern)
+    upload(filename + ".pes")
+
+    '''
+    upload(filename+".pes")
     filename = "text.svg"
     filecontents = open(join("workspace", filename), "r").read()
     pattern = svg_to_pattern(filecontents)
@@ -575,4 +679,4 @@ if __name__ == "__main__":
     pattern_to_svg(pattern, filename + ".svg")
     bef = BrotherEmbroideryFile(filename + ".pes")
     bef.write_pattern(pattern)
-    upload(filename+".pes")
+    '''

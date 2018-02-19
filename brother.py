@@ -205,7 +205,10 @@ def nearest_color(in_color):
         return in_color
     if "red" in dir(in_color):
         in_color = [in_color.red, in_color.green, in_color.blue]
-    in_color = [float(p) for p in in_color]
+    try:
+        in_color = [float(p) for p in in_color]
+    except:
+        print("failed with in_color", in_color)
     return argmin(
         [sum([(in_color[i] - color[0][i]) ** 2 for i in range(3)]) for color in pecThreads
          if color[1] != 'Unknown']) + 1

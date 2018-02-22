@@ -6,8 +6,15 @@ from shutil import copyfile
 from xml.dom.minidom import parseString
 from time import time
 
-import potrace
-from potrace import BezierSegment, CornerSegment
+try:
+    # potrace is wrapped in a try/except statement because the digitizer might sometimes
+    # be run on an environment where Ctypes are not allowed
+    import potrace
+    from potrace import BezierSegment, CornerSegment
+except:
+    potrace = None
+    BezierSegment = None
+    CornerSegment = None
 
 import webcolors
 from PIL import Image

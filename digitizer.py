@@ -297,12 +297,6 @@ def cros_stitch_to_pattern(_image):
             x = pixel[0]
             y = pixel[1]
             attrs.append({"fill": "none", "stroke": rgb})
-
-            '''
-            paths.append(Path(Line(start=x+1j*y, end=x+0.5*minimum_stitch+1j*(y+minimum_stitch)),
-                Line(end=x+0.5*minimum_stitch + 1j * (y+minimum_stitch),
-                     start=x + minimum_stitch + 1j * y)))
-            '''
             paths.append(Path(Line(start=x + 1j * y,
                                    end=x + 0.5 * minimum_stitch + 1j * (y + minimum_stitch))))
     debug_paths = [[path, attrs[i]["fill"], attrs[i]["stroke"]] for i, path in enumerate(paths)]
@@ -320,7 +314,7 @@ def image_to_pattern(filecontents):
     for color in pixels:
         data = numpy.zeros(_image.size, numpy.uint32)
         for pixel in pixels[color]:
-            data[pixel[1], pixel[0]] = 1
+            data[pixel[0], pixel[1]] = 1
         # Create a bitmap from the array
         bmp = potrace.Bitmap(data)
         # Trace the bitmap to a path
@@ -331,15 +325,15 @@ def image_to_pattern(filecontents):
             start_point = curve.start_point
             for segment in curve:
                 if isinstance(segment, BezierSegment):
-                    svg_paths.append(CubicBezier(start=start_point[0]+1j*start_point[1],
-                                                 control1=segment.c1[0]+segment.c1[1]*1j,
-                                                 control2=segment.c2[0] + segment.c2[1] * 1j,
-                                                 end=segment.end_point[0]+1j*segment.end_point[1]))
+                    svg_paths.append(CubicBezier(start=start_point[1]+1j*start_point[0],
+                                                 control1=segment.c1[1]+segment.c1[0]*1j,
+                                                 control2=segment.c2[1] + segment.c2[0] * 1j,
+                                                 end=segment.end_point[1]+1j*segment.end_point[0]))
                 elif isinstance(segment, CornerSegment):
-                    svg_paths.append(Line(start=start_point[0] + 1j * start_point[1],
-                                    end=segment.c[0] + segment.c[1] * 1j))
-                    svg_paths.append(Line(start=segment.c[0] + segment.c[1] * 1j,
-                                    end=segment.end_point[0] + 1j * segment.end_point[1]))
+                    svg_paths.append(Line(start=start_point[1] + 1j * start_point[0],
+                                    end=segment.c[1] + segment.c[0] * 1j))
+                    svg_paths.append(Line(start=segment.c[1] + segment.c[0] * 1j,
+                                    end=segment.end_point[1] + 1j * segment.end_point[0]))
                 else:
                     print("not sure what to do with: ", segment)
                 start_point = segment.end_point
@@ -664,7 +658,7 @@ def upload(pes_filename):
 
 if __name__ == "__main__":
     start = time()
-    filename = "trump_pillow_trans.png"
+    filename = "dagga_logo.png"
     filecontents = open(join("workspace", filename), "r").read()
     pattern = image_to_pattern(filecontents)
     end = time()

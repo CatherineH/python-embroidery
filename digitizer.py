@@ -81,7 +81,6 @@ def remove_close_paths(input_paths):
             return []
         else:
             return  input_paths
-    #starts_closed = Path(*input_paths).iscontinuous() and input_paths[-1].end == input_paths[0].start
     def snap_angle(p):
         hyp = p.length()
         y_diff = (p.start-p.end).imag
@@ -338,8 +337,11 @@ def image_to_pattern(filecontents):
                     print("not sure what to do with: ", segment)
                 start_point = segment.end_point
             output_paths.append(Path(*svg_paths))
-            rgb = "#%02x%02x%02x" % (pixels[color][-1][2][0], pixels[color][-1][2][1], pixels[color][-1][2][2])
-            attributes.append({"fill": "none", "stroke": rgb})
+            color = pixel[2]
+            rgb = "#%02x%02x%02x" % (color[0], color[1], color[2])
+            # is the path closed?
+            fill = rgb if output_paths[0].start == output_paths[-1].end else "none"
+            attributes.append({"fill": fill, "stroke": rgb})
     return generate_pattern(output_paths, attributes, 1.0)
 
 

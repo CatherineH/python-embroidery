@@ -203,6 +203,8 @@ def nearest_color(in_color):
     # if in_color is an int, assume that the nearest color has already been find
     if isinstance(in_color, int):
         return in_color
+    if in_color is None:
+        return in_color
     if "red" in dir(in_color):
         in_color = [in_color.red, in_color.green, in_color.blue]
     try:

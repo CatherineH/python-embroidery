@@ -6,6 +6,8 @@ from shutil import copyfile
 from xml.dom.minidom import parseString
 from time import time
 
+from svgwrite.shapes import Circle
+
 try:
     # potrace is wrapped in a try/except statement because the digitizer might sometimes
     # be run on an environment where Ctypes are not allowed
@@ -30,6 +32,111 @@ from svgpathtools import svgdoc2paths, Line, wsvg, Arc, Path, QuadraticBezier, C
 
 from brother import Pattern, Stitch, Block, BrotherEmbroideryFile, pattern_to_csv, \
     pattern_to_svg, nearest_color
+
+
+def initialize_grid(paths):
+    current_grid = defaultdict(dict)
+    # simplify paths to lines
+    poly_paths = []
+    for path in paths:
+        if path.length() > minimum_stitch:
+            num_segments = ceil(path.length() / minimum_stitch)
+            for seg_i in range(int(num_segments)):
+                poly_paths.append(Line(start=path.point(seg_i/num_segments), end=path.point((seg_i+1)/num_segments)))
+        else:
+            poly_paths.append(Line(start=path.start, end=path.end))
+    bbox = overall_bbox(paths)
+    curr_x = int(bbox[0]/minimum_stitch)*minimum_stitch
+    total_tests = int(bbox[1]-bbox[0])*int(bbox[3]-bbox[2])/(minimum_stitch*minimum_stitch)
+    while curr_x < bbox[1]:
+        curr_y = int(bbox[2]/minimum_stitch)*minimum_stitch
+
+        while curr_y < bbox[3]:
+            test_line = Line(start=curr_x + curr_y * 1j,
+                             end=curr_x + minimum_stitch + (
+                                                           curr_y + minimum_stitch) * 1j)
+            start = time()
+            is_contained = path1_is_contained_in_path2(test_line, Path(*poly_paths))
+            end = time()
+            print("containment took %.2f, num to look at is %s" % (end-start, total_tests))
+            if is_contained:
+                current_grid[curr_x][curr_y] = False
+            curr_y += minimum_stitch
+        curr_x += minimum_stitch
+    return current_grid
+
+
+def scan_lines(paths):
+    bbox = overall_bbox(paths)
+    lines = []
+    fudge_factor = 0.01
+    orientation = abs(bbox[3]-bbox[2]) > abs(bbox[1]-bbox[0])
+    current_y = bbox[2] if orientation else bbox[0]
+    max_pos = bbox[3] if orientation else bbox[1]
+    debug_shapes = [[paths, "none", "gray"]]
+    while current_y < max_pos:
+        current_y += minimum_stitch
+        if orientation:
+            test_line = Line(start=current_y*1j+bbox[0]*(1.0-fudge_factor), end=current_y*1j+bbox[1]*(1.0+fudge_factor))
+        else:
+            test_line = Line(start=current_y  + bbox[2] * (1.0 - fudge_factor)*1j,
+                             end=current_y + bbox[3] * (1.0 + fudge_factor)*1j)
+        squash_intersections = []
+        for path in paths:
+            intersections = path.intersect(test_line)
+            if len(intersections) > 0:
+                squash_intersections += [test_line.point(p[1]) for p in intersections]
+
+        if len(squash_intersections) == 0:
+            continue
+
+        intersections = sorted(squash_intersections, key=lambda x: abs(x-test_line.start))
+        if len(squash_intersections) < 2:
+            continue
+        debug_shapes.append([test_line, "none", "black"])
+        for i in range(0, 2*int(len(intersections)/2), 2):
+            def format_center(ind):
+                return (intersections[ind].real, intersections[ind].imag)
+            debug_shapes.append([Circle(center=format_center(i), r=1, fill="red")])
+            debug_shapes.append([Circle(center=format_center(i+1), r=1, fill="blue")])
+            line = Line(start=intersections[i], end=intersections[i+1])
+            debug_shapes.append([line, "none", "green"])
+            if line.length() > maximum_stitch:
+                num_segments = ceil(line.length() / maximum_stitch)
+                for seg_i in range(int(num_segments)):
+                    lines.append(Line(start=line.point(seg_i/num_segments),
+                                      end=line.point((seg_i+1)/num_segments)))
+            else:
+                lines.append(line)
+        write_debug("fillscan", debug_shapes)
+    return lines
+
+
+def fill_test(stitches, scale, current_grid):
+    for i in range(1, len(stitches)):
+        x_lower = min(stitches[i-1].xx/scale, stitches[i].xx/scale)
+        x_upper = max(stitches[i-1].xx/scale, stitches[i].xx/scale)
+        y_lower = min(stitches[i-1].yy/scale, stitches[i].yy/scale)
+        y_upper = max(stitches[i-1].yy/scale, stitches[i].yy/scale)
+
+        curr_x = int(x_lower/minimum_stitch)*minimum_stitch
+        while curr_x <= x_upper+minimum_stitch:
+            curr_y = int(y_lower/minimum_stitch)*minimum_stitch
+            while curr_y <= y_upper+minimum_stitch:
+                if curr_x in current_grid:
+                    if curr_y in current_grid[curr_x]:
+                        current_grid[curr_x][curr_y] = True
+                curr_y += minimum_stitch
+            curr_x += minimum_stitch
+    last_point = [max(current_grid), 0]
+    all_filled = True
+    for curr_x in current_grid:
+        for curr_y in current_grid[curr_x]:
+            if not current_grid[curr_x][curr_y]:
+                all_filled = False
+                if curr_x < last_point[0] and curr_y > last_point[1]:
+                    last_point = [curr_x, curr_y]
+    return all_filled, last_point[0]+last_point[1]*1j
 
 
 def make_continuous(path):
@@ -57,6 +164,20 @@ def make_continuous(path):
                                                                            inner_start_index::-1]
         paths += [Line(start=cont_paths[-1][inner_start_index].start, end=start_point)]
     return paths
+
+
+def draw_fill(current_grid, paths):
+    colors = ["#dddddd", "#00ff00"]
+    draw_paths = [paths]
+    for curr_x in current_grid:
+        for curr_y in current_grid[curr_x]:
+            shape = svgwrite.shapes.Rect(insert=(curr_x, curr_y),
+                                         size=(minimum_stitch, minimum_stitch),
+                                         fill=colors[current_grid[curr_x][curr_y]])
+            draw_paths.insert(0, shape)
+    write_debug("draw", paths)
+
+fill_method = "scan"#"grid"#"polygon"
 
 
 def overall_bbox(paths):
@@ -92,7 +213,7 @@ def remove_close_paths(input_paths):
             return pi/2.0
         else:
             return asin(y_diff/hyp)
-    paths = [path for path in input_paths if path.length() > minimum_stitch]
+    paths = [path for path in input_paths if path.length() >= minimum_stitch]
     # remove any paths that are less than the minimum stitch
     while len([True for line in paths if line.length() < minimum_stitch]) > 0 \
             or len([paths[i] for i in range(1, len(paths)) if
@@ -197,6 +318,7 @@ def sort_paths(paths, attributes):
     for color in paths_by_color:
         # paths_to_add is a list of indexes of paths in the paths input
         paths_to_add = paths_by_color[color]
+
         block_bbox = overall_bbox([paths[k] for k in paths_to_add])
         start_location = block_bbox[0] + block_bbox[2] * 1j
         paths_to_add = [(x,0) for x in paths_to_add]+[(x, 1) for x in paths_to_add]
@@ -212,6 +334,8 @@ def sort_paths(paths, attributes):
             # filter out the reverse path
             paths_to_add = [p for p in paths_to_add if p[0] != path_to_add[0]]
             start_location = paths[path_to_add[0]].start if path_to_add[0] else paths[path_to_add[1]].end
+            write_debug("sort", [[p, "none", "red"] for p in output_paths]+[[Circle(center=(paths[p[0]].point(p[1]).real, paths[p[0]].point(p[1]).imag), r=0.1), "gray", "none"] for p in paths_to_add]+[[Circle(center=(start_location.real, start_location.imag), r=1), "blue", "none"]])
+            
     # confirm that we haven't abandoned any paths
     assert len(output_paths) == len(paths)
     assert len(output_attributes) == len(attributes)
@@ -221,8 +345,8 @@ def sort_paths(paths, attributes):
 
 # this script is in mms. The assumed minimum stitch width is 1 mm, the maximum width
 # is 5 mm
-minimum_stitch = 1.0
-maximum_stitch = 3.0
+minimum_stitch = 2.0
+maximum_stitch = 7.0
 
 DEBUG = False
 
@@ -260,6 +384,10 @@ def write_debug(partial, parts):
             debug_dwg.add(debug_dwg.line(start=(shape[0].start.real, shape[0].start.imag),
                                          end=(shape[0].end.real, shape[0].end.imag),
                                          fill=shape[1], stroke=shape[2]))
+        elif isinstance(shape[0], svgwrite.shapes.Rect):
+            debug_dwg.add(shape[0])
+        elif isinstance(shape[0], svgwrite.shapes.Circle):
+            debug_dwg.add(shape[0])
         else:
             print("can't put shape", shape[0], " in debug file")
     debug_dwg.write(debug_dwg.filename, pretty=False)
@@ -279,7 +407,7 @@ def posturize(_image):
     return pixels
 
 
-def cros_stitch_to_pattern(_image):
+def cross_stitch_to_pattern(_image):
     # this doesn't work well for images with more than 2-3 colors
     max_dimension = max(_image.size)
     pixel_ratio = int(max_dimension*minimum_stitch/(4*25.4))
@@ -354,7 +482,6 @@ def svg_to_pattern(filecontents):
 
     viewbox = root.getAttribute('viewBox')
     all_paths, attributes = sort_paths(*svgdoc2paths(doc))
-    print(len(all_paths))
 
     if root_width is not None:
         root_width = root_width.value
@@ -570,6 +697,99 @@ def generate_pattern(all_paths, attributes, scale):
             return []
         return stitches
 
+    def fill_grid(paths):
+        grid = initialize_grid(paths)
+
+        def grid_available(pos):
+            if pos.real in grid:
+                if pos.imag in grid[pos.real]:
+                    return not grid[pos.real][pos.imag]
+                else:
+                    return False
+            else:
+                return False
+
+        def count_empty():
+            count = 0
+            for x in grid:
+                for y in grid[x]:
+                    count += not grid[x][y]
+            return count
+
+        draw_fill(grid, paths)
+        # need to find the next location to stitch to. It needs to zig-zag, so we need to
+        # keep a record of what direction it was going in
+        going_east = True
+
+        def find_upper_corner():
+            # find the top or bottom left corner of the grid
+            curr_pos = None
+            for x in grid:
+                for y in grid[x]:
+                    if curr_pos is None:
+                        curr_pos = x + 1j*y
+                        continue
+                    if x < curr_pos.real and y < curr_pos.imag and not grid[x][y]:
+                        curr_pos = x + 1j*y
+            return curr_pos
+
+        rounds = 1
+        num_empty = count_empty()
+        while num_empty > 0:
+            print("round %s, still empty %s" % (rounds, num_empty))
+            curr_pos = find_upper_corner()
+            to = Stitch(["STITCH"], curr_pos.real * scale, curr_pos.imag * scale,
+                        color=fill_color)
+            stitches.append(to)
+            blocks_covered = int(maximum_stitch/minimum_stitch)
+            while grid_available(curr_pos):
+                for i in range(0, blocks_covered):
+                    sign = 1.0 if going_east else -1.0
+                    test_pos = curr_pos+sign*i*minimum_stitch
+                    if not grid_available(test_pos):
+                        break
+                    else:
+                        next_pos = test_pos + 1j*minimum_stitch
+                going_east = not going_east
+                to = Stitch(["STITCH"], next_pos.real * scale, next_pos.imag * scale,
+                            color=fill_color)
+                stitches.append(to)
+                curr_pos = next_pos
+            draw_fill(grid, paths)
+            new_num_empty = count_empty()
+            if new_num_empty == num_empty:
+                print("fill was not able to fill any parts of the grid!")
+                break
+            else:
+                num_empty = new_num_empty
+            rounds += 1
+
+    def fill_scan(paths):
+        lines = scan_lines(paths)
+        attributes = [{"stroke": fill_color} for i in range(len(lines))]
+        print("before lines %s ", len(lines))
+        lines, attributes = sort_paths(lines, attributes)
+        print("after lines %s ", len(lines))
+        if isinstance(lines, list):
+            if len(lines) == 0:
+                return
+            start_point = lines[0].start
+        else:
+            start_point = lines.start
+        to = Stitch(["STITCH"], start_point.real * scale,
+                    start_point.imag * scale, color=fill_color)
+        stitches.append(to)
+
+        for line in lines:
+
+            to = Stitch(["STITCH"], line.start.real * scale,
+                        line.start.imag * scale, color=fill_color)
+            stitches.append(to)
+            to = Stitch(["STITCH"], line.end.real * scale,
+                        line.end.imag * scale, color=fill_color)
+            stitches.append(to)
+        print("stitch length", len(stitches))
+
     for k, v in enumerate(attributes):
         paths = all_paths[k]
         # first, look for the color from the fill
@@ -581,11 +801,16 @@ def generate_pattern(all_paths, attributes, scale):
                 pattern.add_block(Block([Stitch(["JUMP"], 0, 0)], color=fill_color))
             stitches = switch_color(stitches, fill_color)
             full_path = Path(*paths)
-            if not full_path.iscontinuous():
-                print("path not continuous")
-                fill_polygon(make_continuous(full_path))
-            else:
-                fill_polygon(paths)
+            if fill_method == "polygon":
+                if not full_path.iscontinuous():
+                    print("path not continuous")
+                    fill_polygon(make_continuous(full_path))
+                else:
+                    fill_polygon(paths)
+            elif fill_method == "grid":
+                fill_grid(paths)
+            elif fill_method == "scan":
+                fill_scan(paths)
             last_color = fill_color
         if fill_color is not None:
             add_block(stitches)
@@ -660,9 +885,12 @@ def upload(pes_filename):
 
 if __name__ == "__main__":
     start = time()
-    filename = "dagga_logo.png"
+    filename = "schmidt.svg"
     filecontents = open(join("workspace", filename), "r").read()
-    pattern = image_to_pattern(filecontents)
+    if filename.split(".")[-1] != "svg":
+        pattern = image_to_pattern(filecontents)
+    else:
+        pattern = svg_to_pattern(filecontents)
     end = time()
     print("digitizer time: %s" % (end - start))
     pattern_to_csv(pattern, filename + ".csv")
@@ -670,16 +898,3 @@ if __name__ == "__main__":
     bef = BrotherEmbroideryFile(filename + ".pes")
     bef.write_pattern(pattern)
     upload(filename + ".pes")
-
-    '''
-    upload(filename+".pes")
-    filename = "text.svg"
-    filecontents = open(join("workspace", filename), "r").read()
-    pattern = svg_to_pattern(filecontents)
-    end = time()
-    print("digitizer time: %s" % (end - start))
-    pattern_to_csv(pattern, filename + ".csv")
-    pattern_to_svg(pattern, filename + ".svg")
-    bef = BrotherEmbroideryFile(filename + ".pes")
-    bef.write_pattern(pattern)
-    '''

@@ -74,19 +74,42 @@ def scan_lines(paths):
     current_y = bbox[2] if orientation else bbox[0]
     max_pos = bbox[3] if orientation else bbox[1]
     debug_shapes = [[paths, "none", "gray"]]
+
     while current_y < max_pos:
         current_y += minimum_stitch
+        print(bbox, current_y, max_pos)
+
         if orientation:
-            test_line = Line(start=current_y*1j+bbox[0]*(1.0-fudge_factor), end=current_y*1j+bbox[1]*(1.0+fudge_factor))
+            left = min(bbox[0], bbox[1])
+            right = max(bbox[0], bbox[1])
+
+            if left < 0:
+                left *= 1.0 + fudge_factor
+            else:
+                left *= 1.0 - fudge_factor
+            if right < 0:
+                right *= 1.0 - fudge_factor
+            else:
+                right *= 1.0 + fudge_factor
+            test_line = Line(start=current_y*1j+left, end=current_y*1j+right)
         else:
-            test_line = Line(start=current_y  + bbox[2] * (1.0 - fudge_factor)*1j,
-                             end=current_y + bbox[3] * (1.0 + fudge_factor)*1j)
+            up = min(bbox[2], bbox[3])
+            down = max(bbox[2], bbox[3])
+            if up < 0:
+                up *= 1.0 + fudge_factor
+            else:
+                up *= 1.0 - fudge_factor
+            if down < 0:
+                down *= 1.0 - fudge_factor
+            else:
+                down *= 1.0 + fudge_factor
+            test_line = Line(start=current_y  + up*1j,
+                             end=current_y + down *1j)
         squash_intersections = []
         for path in paths:
             intersections = path.intersect(test_line)
             if len(intersections) > 0:
                 squash_intersections += [test_line.point(p[1]) for p in intersections]
-
         if len(squash_intersections) == 0:
             continue
 
@@ -767,9 +790,9 @@ def generate_pattern(all_paths, attributes, scale):
     def fill_scan(paths):
         lines = scan_lines(paths)
         attributes = [{"stroke": fill_color} for i in range(len(lines))]
-        print("before lines %s ", len(lines))
+        print("before lines %s " % len(lines))
         lines, attributes = sort_paths(lines, attributes)
-        print("after lines %s ", len(lines))
+        print("after lines %s " % len(lines))
         if isinstance(lines, list):
             if len(lines) == 0:
                 return

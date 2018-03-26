@@ -51,3 +51,8 @@ Unclosed paths will not be filled
 ------
 
 If a path does not end where it started, it will not get filled in. This is in contrast to how SVGs are typically rendered, where any area within a concave path are filled in.
+
+Will generate patterns that are too large for your machine
+-------
+
+This package may generate patterns that are too large for your machine to deal with.

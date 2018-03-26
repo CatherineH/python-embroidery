@@ -77,7 +77,6 @@ def scan_lines(paths):
 
     while current_y < max_pos:
         current_y += minimum_stitch
-        print(bbox, current_y, max_pos)
 
         if orientation:
             left = min(bbox[0], bbox[1])
@@ -368,8 +367,8 @@ def sort_paths(paths, attributes):
 
 # this script is in mms. The assumed minimum stitch width is 1 mm, the maximum width
 # is 5 mm
-minimum_stitch = 2.0
-maximum_stitch = 7.0
+minimum_stitch = 3.0
+maximum_stitch = 50.0
 
 DEBUG = False
 
@@ -908,7 +907,7 @@ def upload(pes_filename):
 
 if __name__ == "__main__":
     start = time()
-    filename = "schmidt.svg"
+    filename = "A.svg"
     filecontents = open(join("workspace", filename), "r").read()
     if filename.split(".")[-1] != "svg":
         pattern = image_to_pattern(filecontents)

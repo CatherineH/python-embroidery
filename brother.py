@@ -185,8 +185,8 @@ class Pattern():
             raise ValueError("This pattern has a block with no stitches!")
         # return set([block.color for block in self.blocks])
         # look for trim, or end not color, to signify the end of the pattern
-        return [block.color for block in blocks_with_stitches
-                if "TRIM" in block.stitches[0].tags or "END" in block.stitches[0].tags]
+        return [blocks_with_stitches[0].color]+[block.color for block in blocks_with_stitches
+                if "COLOR" in block.stitches[0].tags]
 
     def __str__(self):
         output = ""

@@ -262,7 +262,7 @@ def draw_fill(current_grid, paths):
             draw_paths.insert(0, shape)
     write_debug("draw", paths)
 
-fill_method = "voronoi" #"scan"#"grid"#"polygon"
+fill_method = "scan"#"grid"#"polygon"#"voronoi
 
 
 def overall_bbox(paths):
@@ -577,6 +577,8 @@ def svg_to_pattern(filecontents):
             root_width = float(root_width.replace("mm", ""))
         elif root_width.find("in") > 0:
             root_width = float(root_width.replace("in", ""))*25.4
+        elif root_width.find("px") > 0:
+            root_width = float(root_width.replace("px", ""))*0.264583333
         else:
             root_width = float(root_width)
     # The maximum size is 4 inches - multiplied by 10 for scaling
@@ -1041,7 +1043,7 @@ def upload(pes_filename):
 
 if __name__ == "__main__":
     start = time()
-    filename = "A.svg"
+    filename = "cof_orange_hex.svg"
     filecontents = open(join("workspace", filename), "r").read()
     if filename.split(".")[-1] != "svg":
         pattern = image_to_pattern(filecontents)

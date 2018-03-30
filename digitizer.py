@@ -6,6 +6,7 @@ from shutil import copyfile
 from xml.dom.minidom import parseString
 from time import time
 
+from scipy.spatial.qhull import Voronoi
 from svgwrite.shapes import Circle
 
 try:
@@ -25,6 +26,7 @@ import numpy
 
 css2_names_to_hex = webcolors.css2_names_to_hex
 from webcolors import hex_to_rgb
+import matplotlib.pyplot as plt
 
 import svgwrite
 from numpy import argmax, pi, ceil, sign
@@ -32,6 +34,67 @@ from svgpathtools import svgdoc2paths, Line, wsvg, Arc, Path, QuadraticBezier, C
 
 from brother import Pattern, Stitch, Block, BrotherEmbroideryFile, pattern_to_csv, \
     pattern_to_svg, nearest_color
+
+
+def project(A, B, path):
+    # given a point A on path, and point B within the path, return point C that this line
+    # projects on to
+    pathsize = path.bbox()
+    pathsize = ((pathsize[1]-pathsize[0])**2+(pathsize[3]-pathsize[2])**2)**0.5
+    m = (B.imag-A.imag)/(B.real-A.real)
+    b = A.imag-m*A.real
+    # right
+    if B.real >= A.real:
+        end = pathsize+(m*pathsize+b)*1j
+    elif B.real < A.real: # left
+        end = -pathsize + (-m*pathsize+b)*1j
+    intersections = path.intersect(Line(start=B, end=end))
+    intersections = [x[0][1].point(x[0][2]) for x in intersections]
+    # find the closest point to B
+    intersections.sort(key=lambda x: abs(x-B))
+    return intersections[0]
+
+
+def perpendicular(A, B, path):
+    # make a line that intersects A, that is perpendicular to the line AB, then return
+    # the points at which it intersects the path
+    m = (B.imag-A.imag)/(B.real-A.real)
+    mp = -1.0/m
+    bp = A.imag - mp * A.real
+    b = A.imag -m * A.real
+    test_line = Line(start=path.bbox()[0]+(path.bbox()[0]*mp+bp)*1j,
+                     end=path.bbox()[1]+(path.bbox()[1]*mp+bp)*1j)
+    intersections = path.intersect(test_line)
+    # this is not guaranteed to work... need some way of looking forward and backward
+    intersections = [x[0][1].point(x[0][2]) for x in intersections]
+    upper_intersections = [x for x in intersections if x.imag >= m*x.real+b]
+    lower_intersections = [x for x in intersections if x.imag < m*x.real+b]
+    upper_intersections.sort(key=lambda x: abs(x - B))
+    lower_intersections.sort(key=lambda x: abs(x - B))
+    if len(lower_intersections) == 0 or len(upper_intersections) == 0:
+        plt.plot([test_line.start.real, test_line.end.real],
+                 [test_line.start.imag, test_line.end.imag], 'm-')
+        return intersections[0], intersections[1]
+    return upper_intersections[0], lower_intersections[0]
+
+
+def make_equidistant(in_vertices, minimum_step):
+    # given an input list of vertices, make a new list of vertices that are all
+    # minimum_step apart
+    def get_diff(i):
+        return ((new_vertices[-1][0]-in_vertices[i][0])**2+(new_vertices[-1][1]-in_vertices[i][1])**2)**0.5
+    new_vertices = [in_vertices[0]]
+    for i in range(1, len(in_vertices)):
+        if get_diff(i) < minimum_step:
+            continue
+        while get_diff(i) >= minimum_step:
+            delta_y = in_vertices[i][1]-new_vertices[-1][1]
+            delta_x = in_vertices[i][0]-new_vertices[-1][0]
+            hyp = (delta_x**2+delta_y**2)**0.5
+            new_x = new_vertices[-1][0]+delta_x*minimum_step/hyp
+            new_y = new_vertices[-1][1]+delta_y*minimum_step/hyp
+            new_vertices.append([new_x, new_y])
+    return new_vertices
 
 
 def initialize_grid(paths):
@@ -199,7 +262,7 @@ def draw_fill(current_grid, paths):
             draw_paths.insert(0, shape)
     write_debug("draw", paths)
 
-fill_method = "scan"#"grid"#"polygon"
+fill_method = "voronoi" #"scan"#"grid"#"polygon"
 
 
 def overall_bbox(paths):
@@ -493,6 +556,9 @@ def image_to_pattern(filecontents):
             fill = rgb if output_paths[0].start == output_paths[-1].end else "none"
             attributes.append({"fill": fill, "stroke": rgb})
     return generate_pattern(output_paths, attributes, 1.0)
+
+
+
 
 
 def svg_to_pattern(filecontents):
@@ -812,6 +878,72 @@ def generate_pattern(all_paths, attributes, scale):
             stitches.append(to)
         print("stitch length", len(stitches))
 
+    def fill_voronoi(paths):
+        points = []
+        for path in paths:
+            num_stitches = 100.0*path.length()/maximum_stitch
+            ppoints = [path.point(i/num_stitches) for i in range(int(num_stitches))]
+            for ppoint in ppoints:
+                points.append([ppoint.real, ppoint.imag])
+            points.append([path.end.real, path.end.imag])
+        vor = Voronoi(points)
+        vertices = vor.vertices
+
+        pxs = [x[0] for x in points]
+        pys = [-x[1] for x in points]
+        plt.plot(pxs, pys)
+        # restrict the points to ones within the shape
+        vertices = [x for i, x in enumerate(vertices)
+                    if path1_is_contained_in_path2(Line(end=x[0]+x[1]*1j,
+                                                        start=x[0]+0.01+x[1]*1j),
+                                                   Path(*paths))]
+        # now sort the vertices. This is close but not quite what is being done in
+        # sort_paths
+        new_vertices = []
+        start_location = points[0]
+        while len(vertices) > 0:
+            vertices = sorted(vertices,
+                              key=lambda x: (start_location[0] - x[0])**2
+                                            +(start_location[1]-x[1])**2)
+            new_vertices.append(vertices.pop(0))
+            start_location = new_vertices[-1]
+        vertices = new_vertices
+        # now smooth out the vertices
+        vertices = [[[x[0] for x in vertices[i:i + 3]],
+                     [x[1] for x in vertices[i:i + 3]]]
+                    for i in range(0, len(vertices) - 3)]
+        vertices = [[numpy.average(x[0]), numpy.average(x[1])] for x in vertices]
+        # we want each vertice to be about equidistant
+        vertices = make_equidistant(vertices, minimum_stitch/2.0)
+        xs = [x[0] for x in vertices]
+        ys = [-x[1] for x in vertices]
+
+        plt.plot(xs, ys, 'r-')
+        stitchx = [vertices[0][0]]
+        stitchy = [vertices[0][1]]
+
+        # make spines
+        for i in range(len(vertices) - 1):
+            intersections = perpendicular(vertices[i][0]+vertices[i][1]*1j,
+                                          vertices[i + 1][0]+vertices[i+1][1]*1j,
+                                          Path(*paths))
+            diff = abs(intersections[0]-intersections[1])
+            if diff > 9:
+                continue
+            stitchx.append(intersections[0].real)
+            stitchy.append(-intersections[0].imag)
+            stitchx.append(intersections[1].real)
+            stitchy.append(-intersections[1].imag)
+        for i in range(len(stitchx)):
+            to = Stitch(["STITCH"], stitchx[i] * scale,
+                        -stitchy[i] * scale, color=fill_color)
+            stitches.append(to)
+
+        plt.plot(stitchx, stitchy, 'g-')
+        plt.xlim(min(pxs), max(pxs))
+        plt.ylim(min(pys), max(pys))
+        #plt.show()
+
     for k, v in enumerate(attributes):
         paths = all_paths[k]
         # first, look for the color from the fill
@@ -833,6 +965,8 @@ def generate_pattern(all_paths, attributes, scale):
                 fill_grid(paths)
             elif fill_method == "scan":
                 fill_scan(paths)
+            elif fill_method == "voronoi":
+                fill_voronoi(paths)
             last_color = fill_color
         if fill_color is not None:
             add_block(stitches)

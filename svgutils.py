@@ -4,6 +4,8 @@ from os.path import join, dirname
 from time import time
 from xml.dom.minidom import parseString
 
+from PIL import Image
+from StringIO import StringIO
 import webcolors
 css2_names_to_hex = webcolors.css2_names_to_hex
 from webcolors import hex_to_rgb, rgb_to_hex
@@ -20,13 +22,15 @@ except:
 
 from svgwrite.shapes import Circle
 from configure import minimum_stitch, maximum_stitch, DEBUG
-from svgpathtools import svgdoc2paths, Line, Path, parse_path
 import matplotlib.pyplot as plt
 from brother import Pattern, Stitch, Block, BrotherEmbroideryFile, pattern_to_csv, \
     pattern_to_svg, nearest_color
+from svgpathtools import svgdoc2paths, Line, Path, CubicBezier, parse_path
 
 import svgwrite
-from numpy import argmax, pi, ceil, sign
+
+from numpy import pi, sign, ceil, uint32, zeros
+from shapely.geometry import Polygon
 
 
 def project(A, B, path):
@@ -114,7 +118,6 @@ def initialize_grid(paths):
             start = time()
             is_contained = path1_is_contained_in_path2(test_line, Path(*poly_paths))
             end = time()
-            print("containment took %.2f, num to look at is %s" % (end-start, total_tests))
             if is_contained:
                 current_grid[curr_x][curr_y] = False
             curr_y += minimum_stitch
@@ -386,7 +389,6 @@ def get_color(v, part="fill"):
         return None
 
 
-
 def sort_paths(paths, attributes):
     # sort paths by colors/ position.
     paths_by_color = defaultdict(list)
@@ -455,6 +457,7 @@ def write_debug(partial, parts):
     debug_fh = open(gen_filename(partial), "w")
     debug_dwg = svgwrite.Drawing(debug_fh, profile='tiny')
     for shape in parts:
+
         params = {}
         if len(shape) > 2:
             if shape[2] is not None:
@@ -478,30 +481,170 @@ def write_debug(partial, parts):
     debug_fh.close()
 
 
-def stack_paths(all_paths, attributes):
+def stack_paths(all_paths, attributes, use_shapely=True):
     for i in range(1, len(all_paths)):
-        remove_path = all_paths[i].d()
-        current_path = all_paths[i-1].d()
-        all_paths[i-1] = parse_path(current_path+" "+remove_path)
+        if use_shapely:
+            remove_path = all_paths[i]
+            current_path = all_paths[i-1]
+            all_paths[i-1] = path_difference_shapely(current_path, remove_path)
+        else:
+            remove_path = all_paths[i].d()
+            current_path = all_paths[i-1].d()
+            all_paths[i-1] = parse_path(current_path+" "+remove_path)
     return all_paths, attributes
 
 
+def posturize(_image):
+    pixels = defaultdict(list)
+    colors = defaultdict(int)
+    # _image2 = _image.convert('P', palette=Image.ADAPTIVE, colors=8)
+    # _image = _image2.convert('RGB')
+    # _image2.save('out.png')
+    for i, pixel in enumerate(_image.getdata()):
+        x = i % _image.size[0]
+        y = int(i/_image.size[0])
+        if len(pixel) > 3:
+            if pixel[3] == 255:
+                pixels[nearest_color(pixel)].append((x,y, pixel))
+                colors[nearest_color(pixel)] += 1
+        else:
+            pixels[nearest_color(pixel)].append((x, y, pixel))
+            colors[nearest_color(pixel)] += 1
+    return pixels
+
+
+def path_difference_shapely(path1, path2):
+    # convert both paths to polygons
+    def path_to_poly(inpath):
+        points = []
+        for path in inpath:
+            if isinstance(path, Line):
+                points.append([path.end.real, path.end.imag])
+            else:
+                num_segments = ceil(path.length() / minimum_stitch)
+                for seg_i in range(int(num_segments + 1)):
+                    points.append([path.point(seg_i / num_segments).real,
+                                    path.point(seg_i / num_segments).imag])
+        return Polygon(points)
+    poly1 = path_to_poly(path1)
+    poly2 = path_to_poly(path2)
+    diff_poly = poly1.difference(poly2)
+    # assuming boundary has the points we need
+    points = diff_poly.exterior.coords
+    new_path = []
+    for i in range(len(points)-1):
+        new_path.append(Line(start=points[i-1][0]+points[i-1][1]*1j,
+                             end=points[i][0]+points[i][1]*1j))
+    new_path.append(Line(start=points[-1][0]+points[-1][1]*1j,
+                             end=points[0][0]+points[0][1]*1j))
+    # make a new path from these points
+    return Path(*new_path)
+
+
+def path_union(path1, path2):
+    # trace around the outside of two paths to make a union
+    # todo: this is pretty tricky to implement and at the moment, this is incomplete
+    output_segments = []
+    paths = [path1, path2]
+    if path1_is_contained_in_path2(path1, path2):
+        return path2
+    elif path1_is_contained_in_path2(path2, path1):
+        return path1
+    indexes = [0, 0]
+    current_path = 0
+    # first, check whether the first segment is within the second path so that we can
+    # find the start location. If it is, keep going until you find the first segment that
+    #  isn't within the other path
+    while path1_is_contained_in_path2(paths[current_path][indexes[current_path]], paths[not current_path]) and indexes[current_path] < len(paths[current_path]):
+        indexes[current_path] += 1
+    # does the current path intersect the other path?
+    intersections = paths[not current_path].intersect(paths[current_path][indexes[current_path]]);
+    if len(intersections) > 0:
+        # we need to find out whether the start point is within shape 2
+        test_line = Line(start=paths[current_path][indexes[current_path]].start, end=paths[current_path][indexes[current_path]].end)
+        if path1_is_contained_in_path2(test_line, paths[not current_path]):
+            start_point = None
+        start_point = None
+    else:
+        start_point = paths[current_path][indexes[current_path]].start
+
+    return output_segments
+
+def trace_image(filecontents):
+    output = StringIO()
+    output.write(filecontents)
+    _image = Image.open(output)
+    pixels = posturize(_image)
+    output_paths = []
+    attributes = []
+    for color in pixels:
+        data = zeros(_image.size, uint32)
+        for pixel in pixels[color]:
+            data[pixel[0], pixel[1]] = 1
+        # Create a bitmap from the array
+        bmp = potrace.Bitmap(data)
+        # Trace the bitmap to a path
+        path = bmp.trace()
+        # Iterate over path curves
+        for curve in path:
+            svg_paths = []
+            start_point = curve.start_point
+            true_start = curve.start_point
+            for segment in curve:
+                if true_start is None:
+                    true_start = segment.start_point
+                if start_point is None:
+                    start_point = segment.start_point
+                if isinstance(segment, BezierSegment):
+                    svg_paths.append(
+                        CubicBezier(start=start_point[1] + 1j * start_point[0],
+                                    control1=segment.c1[1] + segment.c1[0] * 1j,
+                                    control2=segment.c2[1] + segment.c2[0] * 1j,
+                                    end=segment.end_point[1] + 1j * segment.end_point[0]))
+                elif isinstance(segment, CornerSegment):
+                    svg_paths.append(Line(start=start_point[1] + 1j * start_point[0],
+                                          end=segment.c[1] + segment.c[0] * 1j))
+                    svg_paths.append(Line(start=segment.c[1] + segment.c[0] * 1j,
+                                          end=segment.end_point[1] + 1j *
+                                                                     segment.end_point[
+                                                                         0]))
+                else:
+                    print("not sure what to do with: ", segment)
+                start_point = segment.end_point
+                if true_start == start_point:
+                    output_paths.append(Path(*svg_paths))
+                    color = pixel[2]
+                    rgb = "#%02x%02x%02x" % (color[0], color[1], color[2])
+                    # is the path closed?
+                    fill = rgb
+                    attributes.append({"fill": fill, "stroke": rgb})
+                    true_start = None
+                    start_point = None
+                    svg_paths = []
+    return output_paths, attributes
+
+
 if __name__ == "__main__":
-    filename = "cof_orange_hex.svg"
-    foldername = dirname(__file__)
-    filecontents = open(join(foldername, "workspace", filename), "r").read()
-    doc = parseString(filecontents)
-
-    # make sure the document size is appropriate
-    root = doc.getElementsByTagName('svg')[0]
-    root_width = root.attributes.getNamedItem('width')
-
-    viewbox = root.getAttribute('viewBox')
-    all_paths, attributes = svgdoc2paths(doc)
-    all_paths, attributes = stack_paths(all_paths, attributes)
+    '''
+    filecontents = open(join(dirname(__file__), "workspace", filename), "r").read()
+    all_paths, attributes = stack_paths(*trace_image(filecontents))
+    #all_paths, attributes = trace_image(filecontents)
     parts = []
     for i in range(len(all_paths)):
         fill_color = get_color(attributes[i], "fill")
         stroke_color = get_color(attributes[i], "stroke")
         parts.append([all_paths[i], fill_color, stroke_color])
-    write_debug("stack", parts)
+    write_debug("trace", parts)
+    '''
+
+    filename = "stack2.svg"
+    filecontents = open(join(dirname(__file__), "workspace", filename), "r").read()
+
+    doc = parseString(filecontents)
+    all_paths, attributes = stack_paths(*svgdoc2paths(doc))
+    parts = []
+    for i in range(len(all_paths)):
+        fill_color = get_color(attributes[i], "fill")
+        stroke_color = get_color(attributes[i], "stroke")
+        parts.append([all_paths[i], fill_color, stroke_color])
+    write_debug("trace", parts)

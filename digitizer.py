@@ -1,4 +1,3 @@
-from collections import defaultdict
 from os import statvfs
 from os.path import join, basename, getsize
 from shutil import copyfile
@@ -18,13 +17,10 @@ except:
     BezierSegment = None
     CornerSegment = None
 
-from PIL import Image
-from StringIO import StringIO
 import matplotlib.pyplot as plt
 
-from numpy import argmax, average, ceil, uint32, zeros
-from svgpathtools import svgdoc2paths, Line, wsvg, Arc, Path, QuadraticBezier, \
-    CubicBezier, parse_path
+from numpy import argmax, average, ceil
+from svgpathtools import svgdoc2paths, Line, Path
 
 from brother import Pattern, Stitch, Block, BrotherEmbroideryFile, pattern_to_csv, \
     pattern_to_svg, nearest_color
@@ -33,18 +29,6 @@ from configure import minimum_stitch, maximum_stitch, DEBUG
 
 fill_method = "scan"#"grid"#"polygon"#"voronoi
 
-
-def posturize(_image):
-    pixels = defaultdict(list)
-    for i, pixel in enumerate(_image.getdata()):
-        x = i % _image.size[0]
-        y = int(i/_image.size[0])
-        if len(pixel) > 3:
-            if pixel[3] == 255:
-                pixels[nearest_color(pixel)].append((x,y, pixel))
-        else:
-            pixels[nearest_color(pixel)].append((x, y, pixel))
-    return pixels
 
 
 def cross_stitch_to_pattern(_image):
@@ -72,45 +56,8 @@ def cross_stitch_to_pattern(_image):
 
 
 def image_to_pattern(filecontents):
-    output = StringIO()
-    output.write(filecontents)
-    _image = Image.open(output)
-    pixels = posturize(_image)
-    output_paths = []
-    attributes = []
-    for color in pixels:
-        data = zeros(_image.size, uint32)
-        for pixel in pixels[color]:
-            data[pixel[0], pixel[1]] = 1
-        # Create a bitmap from the array
-        bmp = potrace.Bitmap(data)
-        # Trace the bitmap to a path
-        path = bmp.trace()
-        # Iterate over path curves
-        for curve in path:
-            svg_paths = []
-            start_point = curve.start_point
-            for segment in curve:
-                if isinstance(segment, BezierSegment):
-                    svg_paths.append(CubicBezier(start=start_point[1]+1j*start_point[0],
-                                                 control1=segment.c1[1]+segment.c1[0]*1j,
-                                                 control2=segment.c2[1] + segment.c2[0] * 1j,
-                                                 end=segment.end_point[1]+1j*segment.end_point[0]))
-                elif isinstance(segment, CornerSegment):
-                    svg_paths.append(Line(start=start_point[1] + 1j * start_point[0],
-                                    end=segment.c[1] + segment.c[0] * 1j))
-                    svg_paths.append(Line(start=segment.c[1] + segment.c[0] * 1j,
-                                    end=segment.end_point[1] + 1j * segment.end_point[0]))
-                else:
-                    print("not sure what to do with: ", segment)
-                start_point = segment.end_point
-            output_paths.append(Path(*svg_paths))
-            color = pixel[2]
-            rgb = "#%02x%02x%02x" % (color[0], color[1], color[2])
-            # is the path closed?
-            fill = rgb if output_paths[0].start == output_paths[-1].end else "none"
-            attributes.append({"fill": fill, "stroke": rgb})
-    return generate_pattern(output_paths, attributes, 1.0)
+    output_paths, attributes = sort_paths(*stack_paths(*trace_image(filecontents)))
+    return generate_pattern(output_paths, attributes, 2.64583333)
 
 
 def svg_to_pattern(filecontents):
@@ -598,7 +545,7 @@ def upload(pes_filename):
 
 if __name__ == "__main__":
     start = time()
-    filename = "cof_orange_hex.svg"
+    filename = "black_square.png"#"emoji_flag.png"
     filecontents = open(join("workspace", filename), "r").read()
     if filename.split(".")[-1] != "svg":
         pattern = image_to_pattern(filecontents)

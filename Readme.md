@@ -4,6 +4,11 @@ used by the [libembroidery](https://github.com/Embroidermodder/Embroidermodder) 
 SVGs this project can't currently digitize
 ==============
 
+ViewBox is ignored
+------------------
+
+All incoming shapes should be transformed by the viewBox attribute, but they aren't. The scale is taken from the units on the width, and the actual value of the width and height are ignored.
+
 Discontinuous Shapes
 --------------------
 

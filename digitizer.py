@@ -56,7 +56,7 @@ def cross_stitch_to_pattern(_image):
 
 
 def image_to_pattern(filecontents):
-    output_paths, attributes = sort_paths(*stack_paths(*trace_image(filecontents)))
+    output_paths, attributes = stack_paths(*trace_image(filecontents))
     return generate_pattern(output_paths, attributes, 2.64583333)
 
 
@@ -545,7 +545,7 @@ def upload(pes_filename):
 
 if __name__ == "__main__":
     start = time()
-    filename = "black_square.png"#"emoji_flag.png"
+    filename = "emoji_flag.png"
     filecontents = open(join("workspace", filename), "r").read()
     if filename.split(".")[-1] != "svg":
         pattern = image_to_pattern(filecontents)

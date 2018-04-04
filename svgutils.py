@@ -30,7 +30,7 @@ from svgpathtools import svgdoc2paths, Line, Path, CubicBezier, parse_path
 import svgwrite
 
 from numpy import pi, sign, ceil, uint32, zeros
-from shapely.geometry import Polygon
+from shapely.geometry import Polygon, GeometryCollection
 
 
 def project(A, B, path):
@@ -261,7 +261,6 @@ def draw_fill(current_grid, paths):
     write_debug("draw", paths)
 
 
-
 def overall_bbox(paths):
     if not isinstance(paths, list):
         return paths.bbox()
@@ -482,24 +481,35 @@ def write_debug(partial, parts):
 
 
 def stack_paths(all_paths, attributes, use_shapely=True):
-    for i in range(1, len(all_paths)):
+    print("got %s paths" % len(all_paths))
+    def path_subtract(current_path, remove_path):
+        return parse_path(current_path.d()+" "+remove_path.d())
+    i = 1
+    while i < len(all_paths):
         if use_shapely:
-            remove_path = all_paths[i]
-            current_path = all_paths[i-1]
-            all_paths[i-1] = path_difference_shapely(current_path, remove_path)
+            removal_method = path_difference_shapely
         else:
-            remove_path = all_paths[i].d()
-            current_path = all_paths[i-1].d()
-            all_paths[i-1] = parse_path(current_path+" "+remove_path)
+            removal_method = path_subtract
+        # remove all above
+        j = i
+        while j < len(all_paths):
+            remove_path = all_paths[j]
+            current_path = all_paths[i-1]
+            tmp_path = removal_method(current_path, remove_path)
+            if tmp_path.length():
+                all_paths[i-1] = tmp_path
+                j += 1
+            else:
+                del all_paths[i-1]
+                del attributes[i-1]
+        i += 1
+    print("passing on %s paths" % len(all_paths))
     return all_paths, attributes
 
 
 def posturize(_image):
     pixels = defaultdict(list)
     colors = defaultdict(int)
-    # _image2 = _image.convert('P', palette=Image.ADAPTIVE, colors=8)
-    # _image = _image2.convert('RGB')
-    # _image2.save('out.png')
     for i, pixel in enumerate(_image.getdata()):
         x = i % _image.size[0]
         y = int(i/_image.size[0])
@@ -513,30 +523,57 @@ def posturize(_image):
     return pixels
 
 
-def path_difference_shapely(path1, path2):
-    # convert both paths to polygons
-    def path_to_poly(inpath):
-        points = []
-        for path in inpath:
-            if isinstance(path, Line):
-                points.append([path.end.real, path.end.imag])
-            else:
-                num_segments = ceil(path.length() / minimum_stitch)
-                for seg_i in range(int(num_segments + 1)):
-                    points.append([path.point(seg_i / num_segments).real,
-                                    path.point(seg_i / num_segments).imag])
-        return Polygon(points)
-    poly1 = path_to_poly(path1)
-    poly2 = path_to_poly(path2)
-    diff_poly = poly1.difference(poly2)
-    # assuming boundary has the points we need
-    points = diff_poly.exterior.coords
+# convert both paths to polygons
+def path_to_poly(inpath):
+    points = []
+    for path in inpath:
+        if isinstance(path, Line):
+            points.append([path.end.real, path.end.imag])
+        else:
+            num_segments = ceil(path.length() / minimum_stitch)
+            for seg_i in range(int(num_segments + 1)):
+                points.append([path.point(seg_i / num_segments).real,
+                                path.point(seg_i / num_segments).imag])
+    return Polygon(points)
+
+
+def shape_to_path(shape):
     new_path = []
-    for i in range(len(points)-1):
-        new_path.append(Line(start=points[i-1][0]+points[i-1][1]*1j,
-                             end=points[i][0]+points[i][1]*1j))
-    new_path.append(Line(start=points[-1][0]+points[-1][1]*1j,
-                             end=points[0][0]+points[0][1]*1j))
+    if shape.area > 0.0:
+        points = shape.exterior.coords
+        # close the path
+        new_path.append(Line(start=points[-1][0] + points[-1][1] * 1j,
+                             end=points[0][0] + points[0][1] * 1j))
+    elif shape.length > 0.0:
+        points = shape.coords
+    else:
+        return []
+    for i in range(len(points) - 1):
+        new_path.append(Line(start=points[i - 1][0] + points[i - 1][1] * 1j,
+                             end=points[i][0] + points[i][1] * 1j))
+
+    return Path(*new_path)
+
+
+def path_difference_shapely(path1, path2):
+    poly1 = path_to_poly(path1)
+    if not poly1.is_valid:
+        # output the shape to a debug file
+        # write_debug("invalid1", [[shape_to_path(poly1), "black", "none"]])
+        return path1
+    poly2 = path_to_poly(path2)
+    if not poly2.is_valid:
+        # output the shape to a debug file
+        # write_debug("invalid2", [[shape_to_path(poly2), "black", "none"]])
+        return path1
+    diff_poly = poly1.difference(poly2)
+    if isinstance(diff_poly, Polygon):
+        new_path = shape_to_path(diff_poly)
+    elif isinstance(diff_poly, GeometryCollection):
+        new_path = []
+        for shape in diff_poly:
+            # line objects have a length but no area
+            new_path += shape_to_path(shape)
     # make a new path from these points
     return Path(*new_path)
 
@@ -569,6 +606,7 @@ def path_union(path1, path2):
         start_point = paths[current_path][indexes[current_path]].start
 
     return output_segments
+
 
 def trace_image(filecontents):
     output = StringIO()
@@ -625,23 +663,9 @@ def trace_image(filecontents):
 
 
 if __name__ == "__main__":
-    '''
+    filename = "emoji_flag.png"
     filecontents = open(join(dirname(__file__), "workspace", filename), "r").read()
     all_paths, attributes = stack_paths(*trace_image(filecontents))
-    #all_paths, attributes = trace_image(filecontents)
-    parts = []
-    for i in range(len(all_paths)):
-        fill_color = get_color(attributes[i], "fill")
-        stroke_color = get_color(attributes[i], "stroke")
-        parts.append([all_paths[i], fill_color, stroke_color])
-    write_debug("trace", parts)
-    '''
-
-    filename = "stack2.svg"
-    filecontents = open(join(dirname(__file__), "workspace", filename), "r").read()
-
-    doc = parseString(filecontents)
-    all_paths, attributes = stack_paths(*svgdoc2paths(doc))
     parts = []
     for i in range(len(all_paths)):
         fill_color = get_color(attributes[i], "fill")

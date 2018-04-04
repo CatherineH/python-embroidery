@@ -509,17 +509,14 @@ def stack_paths(all_paths, attributes, use_shapely=True):
 
 def posturize(_image):
     pixels = defaultdict(list)
-    colors = defaultdict(int)
     for i, pixel in enumerate(_image.getdata()):
         x = i % _image.size[0]
         y = int(i/_image.size[0])
         if len(pixel) > 3:
             if pixel[3] == 255:
                 pixels[nearest_color(pixel)].append((x,y, pixel))
-                colors[nearest_color(pixel)] += 1
         else:
             pixels[nearest_color(pixel)].append((x, y, pixel))
-            colors[nearest_color(pixel)] += 1
     return pixels
 
 
@@ -649,11 +646,11 @@ def trace_image(filecontents):
                 else:
                     print("not sure what to do with: ", segment)
                 start_point = segment.end_point
+                # is the path closed?
                 if true_start == start_point:
                     output_paths.append(Path(*svg_paths))
                     color = pixel[2]
                     rgb = "#%02x%02x%02x" % (color[0], color[1], color[2])
-                    # is the path closed?
                     fill = rgb
                     attributes.append({"fill": fill, "stroke": rgb})
                     true_start = None

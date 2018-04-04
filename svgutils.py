@@ -440,7 +440,7 @@ def gen_filename(partial="anim"):
     return "gen_%s_%s_.svg" % (partial, int(time()*1000))
 
 
-def write_debug(partial, parts):
+def write_debug(partial, parts, override=False):
     """
     write a set of shapes to an output file.
 
@@ -450,7 +450,7 @@ def write_debug(partial, parts):
     svgpathtoolshape, the second value is the fill, and the third value is the stroke color.
     :return: nothing
     """
-    if not DEBUG:
+    if not override and not DEBUG:
         return
 
     debug_fh = open(gen_filename(partial), "w")
@@ -509,9 +509,11 @@ def stack_paths(all_paths, attributes, use_shapely=True):
 
 def posturize(_image):
     pixels = defaultdict(list)
+    _image = _image.convert('RGBA')
     for i, pixel in enumerate(_image.getdata()):
         x = i % _image.size[0]
         y = int(i/_image.size[0])
+
         if len(pixel) > 3:
             if pixel[3] == 255:
                 pixels[nearest_color(pixel)].append((x,y, pixel))
@@ -660,7 +662,7 @@ def trace_image(filecontents):
 
 
 if __name__ == "__main__":
-    filename = "emoji_flag.png"
+    filename = "stack2.png"
     filecontents = open(join(dirname(__file__), "workspace", filename), "r").read()
     all_paths, attributes = stack_paths(*trace_image(filecontents))
     parts = []
@@ -668,4 +670,4 @@ if __name__ == "__main__":
         fill_color = get_color(attributes[i], "fill")
         stroke_color = get_color(attributes[i], "stroke")
         parts.append([all_paths[i], fill_color, stroke_color])
-    write_debug("trace", parts)
+    write_debug("trace", parts, override=True)

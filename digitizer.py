@@ -545,7 +545,7 @@ def upload(pes_filename):
 
 if __name__ == "__main__":
     start = time()
-    filename = "emoji_flag.png"
+    filename = "stack2.png"
     filecontents = open(join("workspace", filename), "r").read()
     if filename.split(".")[-1] != "svg":
         pattern = image_to_pattern(filecontents)

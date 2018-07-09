@@ -3,6 +3,14 @@ import csv
 from os.path import basename, splitext
 from svgpathtools import wsvg, Path, Line
 from numpy import argmin
+from math import ceil
+from configure import *
+
+if PLOTTING:
+    import matplotlib.pyplot as plt
+else:
+    plt = None
+from configure import *
 
 pecThreads = [[[0, 0, 0], "Unknown", ""],
               [[14, 31, 124], "Prussian Blue", ""],
@@ -269,6 +277,10 @@ class Block:
 
     def __repr__(self):
         return self.__str__()
+
+    def __iter__(self):
+        for i in range(len(self.stitches)):
+            yield (self.stitches[i].xx, self.stitches[i].yy)
 
 
 class BoundingBox:
@@ -583,6 +595,7 @@ def pattern_to_svg(pattern, filename):
         output_file = filename
     paths = []
     colors = []
+    scale_factor = 0.1 # scale from cm to mm from pes
     for block in pattern.blocks:
         block_paths = []
         last_stitch = None
@@ -593,15 +606,19 @@ def pattern_to_svg(pattern, filename):
             if last_stitch is None:
                 last_stitch = stitch
                 continue
-            block_paths.append(Line(start=last_stitch.complex, end=stitch.complex))
+            block_paths.append(Line(start=last_stitch.complex*scale_factor,
+                                    end=stitch.complex*scale_factor))
             last_stitch = stitch
         if len(block_paths) > 0:
             colors.append(block.tuple_color)
             paths.append(Path(*block_paths))
+    dims = overall_bbox(paths)
+    mindim = max(dims[1]-dims[0], dims[3]-dims[2])
+    print("in pattern to svg, overallbbox", overall_bbox(paths))
     if len(paths) == 0:
         print("warning: pattern did not generate stitches")
         return
-    wsvg(paths, colors, filename = output_file)
+    wsvg(paths, colors, filename = output_file, mindim=mindim)
 
 
 def populate_image(pattern, index=None):
@@ -620,6 +637,53 @@ def populate_image(pattern, index=None):
             x = int(round((stitch.xx - pattern.bounds.left) * xFactor)) + 3
             y = int(round((stitch.yy - pattern.bounds.top) * yFactor)) + 3
             pattern.image[y][x] = 1
+
+
+def overall_bbox(paths):
+    if not isinstance(paths, list):
+        return paths.bbox()
+    over_bbox = [None, None, None, None]
+    for path in paths:
+        bbox = path.bbox()
+        for i in range(4):
+            if over_bbox[i] is None:
+                over_bbox[i] = bbox[i]
+        over_bbox[0] = min(over_bbox[0], bbox[0])
+        over_bbox[1] = max(over_bbox[1], bbox[1])
+        over_bbox[2] = min(over_bbox[2], bbox[2])
+        over_bbox[3] = max(over_bbox[3], bbox[3])
+    return over_bbox
+
+
+def measure_density(pattern):
+    all_stitches = []
+    for block in pattern.blocks:
+        all_stitches += list(block)
+    boundx = max([s[0] for s in all_stitches]), min([s[0] for s in all_stitches])
+    boundy = max([s[1] for s in all_stitches]), min([s[1] for s in all_stitches])
+    x_bins = int(ceil((boundx[0]-boundx[1])/minimum_stitch))
+    y_bins = int(ceil((boundy[0]-boundy[1])/minimum_stitch))
+    print(x_bins, y_bins)
+    density = [[0 for _ in range(x_bins)] for _ in range(y_bins)]
+    for stitch in all_stitches:
+        i = int((stitch[0] - boundx[1])/minimum_stitch)
+        j = int((stitch[1] - boundy[1]) / minimum_stitch)
+        density[j][i] += 1
+    for i in range(x_bins):
+        for j in range(y_bins):
+            density[j][i] = density[j][i] if density[j][i] > 3 else 0
+
+    fig, ax = plt.subplots()
+    ax.imshow(density)
+    heatmap = ax.pcolor(density, cmap=plt.cm.Blues)
+    plt.colorbar(heatmap)
+    fig.savefig('density.png')  # save the figure to file
+    plt.close(fig)
+    for values in density:
+        for value in values:
+            if value > 3:
+                raise ValueError("stitch density is greater than 3. Check density.png.")
+
 
 
 if __name__ == "__main__":

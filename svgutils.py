@@ -4,11 +4,14 @@ from os.path import join, dirname
 from time import time
 from xml.dom.minidom import parseString
 
+import sys
 from PIL import Image
 from StringIO import StringIO
 import webcolors
+
 css2_names_to_hex = webcolors.css2_names_to_hex
 from webcolors import hex_to_rgb, rgb_to_hex
+
 
 try:
     # potrace is wrapped in a try/except statement because the digitizer might sometimes
@@ -21,16 +24,19 @@ except:
     CornerSegment = None
 
 from svgwrite.shapes import Circle
-from configure import minimum_stitch, maximum_stitch, DEBUG
-import matplotlib.pyplot as plt
-from brother import Pattern, Stitch, Block, BrotherEmbroideryFile, pattern_to_csv, \
-    pattern_to_svg, nearest_color
+from configure import *
+
+if PLOTTING:
+    import matplotlib.pyplot as plt
+else:
+    plt = None
+from brother import *
 from svgpathtools import svgdoc2paths, Line, Path, CubicBezier, parse_path
 
 import svgwrite
 
 from numpy import pi, sign, ceil, uint32, zeros
-from shapely.geometry import Polygon, GeometryCollection
+from shapely.geometry import Polygon, GeometryCollection, MultiPolygon
 
 
 def project(A, B, path):
@@ -261,22 +267,6 @@ def draw_fill(current_grid, paths):
     write_debug("draw", paths)
 
 
-def overall_bbox(paths):
-    if not isinstance(paths, list):
-        return paths.bbox()
-    over_bbox = [None, None, None, None]
-    for path in paths:
-        bbox = path.bbox()
-        for i in range(4):
-            if over_bbox[i] is None:
-                over_bbox[i] = bbox[i]
-        over_bbox[0] = min(over_bbox[0], bbox[0])
-        over_bbox[1] = max(over_bbox[1], bbox[1])
-        over_bbox[2] = min(over_bbox[2], bbox[2])
-        over_bbox[3] = max(over_bbox[3], bbox[3])
-    return over_bbox
-
-
 def remove_close_paths(input_paths):
     if len(input_paths) == 1:
         if input_paths[0].length() < minimum_stitch:
@@ -350,6 +340,26 @@ def path1_is_contained_in_path2(path1, path2, crosses=False):
 
 def distance(point1, point2):
     return ((point1[0] - point2[0]) ** 2 + (point1[1] - point2[1]) ** 2) ** 0.5
+
+
+def get_stroke_width(v, scale):
+    # get the stroke width from the style information or from the attributes
+    stroke_width = None
+    if "stroke-width" in v:
+        stroke_width = v["stroke-width"]
+    elif "style" in v:
+        style_parts = {k: v for k,v in [elem.split(":")
+                                        for elem in v["style"].split(";")]}
+        if "stroke-width" in style_parts:
+            stroke_width = style_parts["stroke-width"]
+    if stroke_width is None:
+        return minimum_stitch
+    try:
+        stroke_width = float(stroke_width)
+    except TypeError:
+        raise NotImplementedError("conversion from {} to stroke width not yet "
+                                  "supported".format(stroke_width))
+    return scale*stroke_width
 
 
 def get_color(v, part="fill"):
@@ -509,16 +519,23 @@ def stack_paths(all_paths, attributes, use_shapely=True):
 
 def posturize(_image):
     pixels = defaultdict(list)
-    _image = _image.convert('RGBA')
+    _image = _image.convert('RGBA', colors=20)
+    color_cache = {}
     for i, pixel in enumerate(_image.getdata()):
+        if i % 100 == 0:
+            sys.stdout.write("posturizing %s\r" % (float(i)/(_image.size[0]*_image.size[1])))
         x = i % _image.size[0]
         y = int(i/_image.size[0])
 
         if len(pixel) > 3:
             if pixel[3] == 255:
-                pixels[nearest_color(pixel)].append((x,y, pixel))
+                if pixel not in color_cache:
+                    color_cache[pixel] = nearest_color(pixel)
+                pixels[color_cache[pixel]].append((x,y, pixel))
         else:
-            pixels[nearest_color(pixel)].append((x, y, pixel))
+            if pixel not in color_cache:
+                color_cache[pixel] = nearest_color(pixel)
+            pixels[color_cache[pixel]].append((x, y, pixel))
     return pixels
 
 
@@ -554,6 +571,7 @@ def shape_to_path(shape):
     return Path(*new_path)
 
 
+
 def path_difference_shapely(path1, path2):
     poly1 = path_to_poly(path1)
     if not poly1.is_valid:
@@ -568,11 +586,13 @@ def path_difference_shapely(path1, path2):
     diff_poly = poly1.difference(poly2)
     if isinstance(diff_poly, Polygon):
         new_path = shape_to_path(diff_poly)
-    elif isinstance(diff_poly, GeometryCollection):
+    elif isinstance(diff_poly, GeometryCollection) or isinstance(diff_poly, MultiPolygon):
         new_path = []
         for shape in diff_poly:
             # line objects have a length but no area
             new_path += shape_to_path(shape)
+    else:
+        print("not sure what to do with type:", type(diff_poly))
     # make a new path from these points
     return Path(*new_path)
 

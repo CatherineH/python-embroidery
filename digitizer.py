@@ -1,11 +1,17 @@
+import argparse
 from os import statvfs
 from os.path import join, basename, getsize
 from shutil import copyfile
 from xml.dom.minidom import parseString
 from time import time
+from svgutils import *
 
-from scipy.spatial.qhull import Voronoi
 
+if PLOTTING:
+    from scipy.spatial.qhull import Voronoi
+    import matplotlib.pyplot as plt
+else:
+    plt = None
 
 try:
     # potrace is wrapped in a try/except statement because the digitizer might sometimes
@@ -17,18 +23,22 @@ except:
     BezierSegment = None
     CornerSegment = None
 
-import matplotlib.pyplot as plt
+
 
 from numpy import argmax, average, ceil
 from svgpathtools import svgdoc2paths, Line, Path
 
-from brother import Pattern, Stitch, Block, BrotherEmbroideryFile, pattern_to_csv, \
-    pattern_to_svg, nearest_color
-from svgutils import *
+from brother import *
 from configure import minimum_stitch, maximum_stitch, DEBUG
 
 fill_method = "scan"#"grid"#"polygon"#"voronoi
 
+parser = argparse.ArgumentParser(
+    description='Generate a pes file for brother sewing machines from an svg or png image')
+parser.add_argument('--filename', type=str,
+                    help='The filename of the input image.')
+parser.add_argument('--fill', dest="fill", action="store_true",
+                    help="Fill the shapes")
 
 
 def cross_stitch_to_pattern(_image):
@@ -55,12 +65,12 @@ def cross_stitch_to_pattern(_image):
     return generate_pattern(paths, attrs, 1.0)
 
 
-def image_to_pattern(filecontents):
+def image_to_pattern(filecontents, fill=True):
     output_paths, attributes = stack_paths(*trace_image(filecontents))
-    return generate_pattern(output_paths, attributes, 2.64583333)
+    return generate_pattern(output_paths, attributes, 2.64583333, fill=fill)
 
 
-def svg_to_pattern(filecontents):
+def svg_to_pattern(filecontents, fill=True):
     doc = parseString(filecontents)
 
     # make sure the document size is appropriate
@@ -68,18 +78,24 @@ def svg_to_pattern(filecontents):
     root_width = root.attributes.getNamedItem('width')
 
     viewbox = root.getAttribute('viewBox')
-    all_paths, attributes = sort_paths(*stack_paths(*svgdoc2paths(doc)))
+    if fill:
+        all_paths, attributes = sort_paths(*stack_paths(*svgdoc2paths(doc)))
+    else:
+        all_paths, attributes = sort_paths(*svgdoc2paths(doc))
 
     if root_width is not None:
         root_width = root_width.value
         if root_width.find("mm") > 0:
             root_width = float(root_width.replace("mm", ""))
         elif root_width.find("in") > 0:
-            root_width = float(root_width.replace("in", ""))*25.4
+            root_width = float(root_width.replace("in", "")) * 25.4
         elif root_width.find("px") > 0:
-            root_width = float(root_width.replace("px", ""))*0.264583333
+            root_width = float(root_width.replace("px", "")) * 0.264583333
+        elif root_width.find("pt") > 0:
+            root_width = float(root_width.replace("pt", "")) * 0.264583333
         else:
             root_width = float(root_width)
+
     # The maximum size is 4 inches - multiplied by 10 for scaling
     if root_width:
         size = root_width
@@ -98,12 +114,13 @@ def svg_to_pattern(filecontents):
         scale = size / width
     else:
         scale = size / height
-    return generate_pattern(all_paths, attributes, scale)
+    return generate_pattern(all_paths, attributes, scale, fill=fill)
 
 
-def generate_pattern(all_paths, attributes, scale):
+def generate_pattern(all_paths, attributes, scale, fill=True):
     # cut the paths by the paths above
-    all_paths, attributes = stack_paths(all_paths, attributes)
+    if fill:
+        all_paths, attributes = stack_paths(all_paths, attributes)
 
     def add_block(stitches):
         if len(stitches) == 0:
@@ -121,7 +138,7 @@ def generate_pattern(all_paths, attributes, scale):
     stitches = []
 
     def fill_polygon(paths):
-        def fill_trap(paths,color="gray"):
+        def fill_trap(paths, color="gray"):
             side = shorter_side(paths)
             shapes = [[Path(*paths), "none", "black"], [Path(*paths[side:side+3]), color, "none"]]
             side2 = side+2
@@ -326,7 +343,6 @@ def generate_pattern(all_paths, attributes, scale):
         rounds = 1
         num_empty = count_empty()
         while num_empty > 0:
-            print("round %s, still empty %s" % (rounds, num_empty))
             curr_pos = find_upper_corner()
             to = Stitch(["STITCH"], curr_pos.real * scale, curr_pos.imag * scale,
                         color=fill_color)
@@ -357,9 +373,7 @@ def generate_pattern(all_paths, attributes, scale):
     def fill_scan(paths):
         lines = scan_lines(paths)
         attributes = [{"stroke": fill_color} for i in range(len(lines))]
-        print("before lines %s " % len(lines))
         lines, attributes = sort_paths(lines, attributes)
-        print("after lines %s " % len(lines))
         if isinstance(lines, list):
             if len(lines) == 0:
                 return
@@ -378,7 +392,6 @@ def generate_pattern(all_paths, attributes, scale):
             to = Stitch(["STITCH"], line.end.real * scale,
                         line.end.imag * scale, color=fill_color)
             stitches.append(to)
-        print("stitch length", len(stitches))
 
     def fill_voronoi(paths):
         points = []
@@ -393,7 +406,8 @@ def generate_pattern(all_paths, attributes, scale):
 
         pxs = [x[0] for x in points]
         pys = [-x[1] for x in points]
-        plt.plot(pxs, pys)
+        if PLOTTING:
+            plt.plot(pxs, pys)
         # restrict the points to ones within the shape
         vertices = [x for i, x in enumerate(vertices)
                     if path1_is_contained_in_path2(Line(end=x[0]+x[1]*1j,
@@ -419,8 +433,8 @@ def generate_pattern(all_paths, attributes, scale):
         vertices = make_equidistant(vertices, minimum_stitch/2.0)
         xs = [x[0] for x in vertices]
         ys = [-x[1] for x in vertices]
-
-        plt.plot(xs, ys, 'r-')
+        if PLOTTING:
+            plt.plot(xs, ys, 'r-')
         stitchx = [vertices[0][0]]
         stitchy = [vertices[0][1]]
 
@@ -440,17 +454,26 @@ def generate_pattern(all_paths, attributes, scale):
             to = Stitch(["STITCH"], stitchx[i] * scale,
                         -stitchy[i] * scale, color=fill_color)
             stitches.append(to)
-
-        plt.plot(stitchx, stitchy, 'g-')
-        plt.xlim(min(pxs), max(pxs))
-        plt.ylim(min(pys), max(pys))
-        #plt.show()
+        if PLOTTING:
+            plt.plot(stitchx, stitchy, 'g-')
+            plt.xlim(min(pxs), max(pxs))
+            plt.ylim(min(pys), max(pys))
+            #plt.show()
 
     for k, v in enumerate(attributes):
         paths = all_paths[k]
         # first, look for the color from the fill
+        # if fill is false, change the attributes so that the fill is none but the stroke
+        # is the fill (if not set)
         fill_color = get_color(v, "fill")
         stroke_color = get_color(v, "stroke")
+        stroke_width = get_stroke_width(v, scale)
+        if not fill:
+            if not stroke_color:
+                stroke_color = fill_color
+            stroke_width = stroke_width if stroke_width != minimum_stitch \
+                else minimum_stitch*3.0
+            fill_color = None
         if fill_color is None and stroke_color is None:
             fill_color = [0, 0, 0]
         # if both the fill color and stroke color are none,
@@ -461,7 +484,6 @@ def generate_pattern(all_paths, attributes, scale):
             full_path = Path(*paths)
             if fill_method == "polygon":
                 if not full_path.iscontinuous():
-                    print("path not continuous")
                     fill_polygon(make_continuous(full_path))
                 else:
                     fill_polygon(paths)
@@ -478,19 +500,41 @@ def generate_pattern(all_paths, attributes, scale):
         if stroke_color is None:
             continue
         stitches = switch_color(stitches, stroke_color)
-        #paths = remove_close_paths(paths)
+        # paths = remove_close_paths(paths)
+        # how many times can the minimum_stitch fit in the stroke width?
+        # if it is greater 1, duplicate the stitch offset by the minimum stitch
+        if stroke_width/minimum_stitch > 1.:
+            new_paths = []
+            for i in range(0, int(stroke_width / minimum_stitch)):
+                for path in paths:
+                    if i == 0:
+                        new_paths.append(path)
+                        continue
+                    # what is the broad angle of the path? (used to determine the
+                    # perpendicular angle to translate the path by)
+                    num_norm_samples = 10.0
+                    diff = average([path.normal(t/num_norm_samples)
+                                     for t in range(int(num_norm_samples))])
+
+                    diff *= -1 if i % 2 == 0 else 1
+                    diff *= ceil(i/2.0)*minimum_stitch/2.0
+
+                    # if i is odd, translate up/left, if even, translate down/right
+                    new_paths.append(path.translated(diff))
+
+            paths = new_paths
+
         for i, path in enumerate(paths):
             if path.length() == 0:
                 continue
             to = Stitch(["STITCH"], path.start.real * scale,
                         path.start.imag * scale, color=stroke_color)
             stitches.append(to)
-            num_segments = ceil(path.length()/maximum_stitch)
+            num_segments = ceil(path.length()/minimum_stitch)
             for seg_i in range(int(num_segments+1)):
                 control_stitch = Stitch(["STITCH"], path.point(seg_i/num_segments).real * scale,
                                     path.point(seg_i/num_segments).imag * scale, color=stroke_color)
                 stitches.append(control_stitch)
-
             # if the next stitch doesn't start at the end of this stitch, add that one as
             # well
             end_stitch = Stitch(["STITCH"], path.end.real * scale,
@@ -503,6 +547,7 @@ def generate_pattern(all_paths, attributes, scale):
         if len(stitches) > 0:
             last_color = stroke_color
     add_block(stitches)
+
     if len(pattern.blocks[-1].stitches) > 0:
         last_stitch = pattern.blocks[-1].stitches[-1]
         pattern.add_block(
@@ -545,16 +590,18 @@ def upload(pes_filename):
 
 if __name__ == "__main__":
     start = time()
-    filename = "stack2.png"
+    args = parser.parse_args()
+    filename = args.filename
     filecontents = open(join("workspace", filename), "r").read()
     if filename.split(".")[-1] != "svg":
-        pattern = image_to_pattern(filecontents)
+        pattern = image_to_pattern(filecontents, args.fill)
     else:
-        pattern = svg_to_pattern(filecontents)
+        pattern = svg_to_pattern(filecontents, args.fill)
     end = time()
     print("digitizer time: %s" % (end - start))
     pattern_to_csv(pattern, filename + ".csv")
     pattern_to_svg(pattern, filename + ".svg")
+    measure_density(pattern)
     bef = BrotherEmbroideryFile(filename + ".pes")
     bef.write_pattern(pattern)
     upload(filename + ".pes")

@@ -174,6 +174,13 @@ class Pattern():
         self.blocks.append(block)
 
     @property
+    def all_stitches(self):
+        _all_stitches = []
+        for block in self.blocks:
+            _all_stitches += list(block)
+        return _all_stitches
+
+    @property
     def bounds(self):
         if self.bounding_box is None:
             self.bounding_box = calc_bounding_box(self.blocks)
@@ -227,16 +234,16 @@ def nearest_color(in_color):
 class Stitch:
     def __init__(self, tags=[], xx=0.0, yy=0.0, color=0):
         self.tags = tags
-        self.xx = xx
-        self.yy = yy
+        self.x = xx
+        self.y = yy
         self.color = color
 
     @property
     def complex(self):
-        return self.xx + self.yy*1j
+        return self.x + self.y*1j
 
     def __str__(self):
-        return "{} {} {}\n".format(self.xx, self.yy, self.tags[0])
+        return "{} {} {}\n".format(self.x, self.y, self.tags[0])
 
     def __repr__(self):
         return self.__str__()
@@ -280,7 +287,7 @@ class Block:
 
     def __iter__(self):
         for i in range(len(self.stitches)):
-            yield (self.stitches[i].xx, self.stitches[i].yy)
+            yield (self.stitches[i].x, self.stitches[i].y)
 
 
 class BoundingBox:
@@ -303,7 +310,44 @@ class BoundingBox:
 
     def __repr__(self):
         return self.__str__()
-    
+
+
+# spiral around a point until you find the next available location
+class NextAvailableGrid(object):
+    def __init__(self, i, j):
+        self.i = i # i is the x coordinate
+        self.j = j # j is the y coordinate
+        self.direction = "left"
+        self.stepsize = 1
+        self.current_step = 0
+
+    def __iter__(self):
+        return self
+
+    # Python 3 compatibility
+    def __next__(self):
+        return self.next()
+
+    def next(self):
+        directions = ["left", "down", "right", "up"] # go counter-clockwise
+        # do the transforms
+        if self.direction == "left":
+            self.i += 1
+        if self.direction == "down":
+            self.j += 1
+        if self.direction == "right":
+            self.i -= 1
+        if self.direction == "up":
+            self.j -= 1
+        self.current_step += 1
+        if self.current_step == self.stepsize:
+            self.direction = directions[(directions.index(self.direction) + 1)
+                                        % len(directions)]
+            self.current_step = 0
+            if self.direction in ["right", "left"]:
+                self.stepsize += 1
+
+        return self.i, self.j
 
 def csv_to_pattern(filename):
     pattern = Pattern()
@@ -333,8 +377,8 @@ def csv_to_pattern(filename):
                 pattern.colors.append(row[2:5])
 
     # add the ending block
-    end_stitch = Stitch(["END"], pattern.blocks[-1].stitches[-1].xx,
-                        pattern.blocks[-1].stitches[-1].yy)
+    end_stitch = Stitch(["END"], pattern.blocks[-1].stitches[-1].x,
+                        pattern.blocks[-1].stitches[-1].y)
     pattern.blocks.append(
         Block(stitches=[end_stitch], color=pattern.colors[pattern.current_color]))
     return pattern
@@ -347,10 +391,10 @@ def calc_bounding_box(blocks):
         for stitch in stitches:
             if "TRIM" in stitch.tags:
                 continue
-            bounding_rect.left = min(bounding_rect.left, stitch.xx*10.0)
-            bounding_rect.top = min(bounding_rect.top, stitch.yy)
-            bounding_rect.right = max(bounding_rect.right, stitch.xx)
-            bounding_rect.bottom = max(bounding_rect.bottom, stitch.yy)
+            bounding_rect.left = min(bounding_rect.left, stitch.x*10.0)
+            bounding_rect.top = min(bounding_rect.top, stitch.y)
+            bounding_rect.right = max(bounding_rect.right, stitch.x)
+            bounding_rect.bottom = max(bounding_rect.bottom, stitch.y)
     return bounding_rect
 
 
@@ -405,8 +449,8 @@ class BrotherEmbroideryFile():
             self.output += chr(b)
 
     def write_stitch(self, stitch, bounds):
-        self.output += self.write_int(stitch.xx - bounds.left)
-        self.output += self.write_int(stitch.yy + bounds.top)
+        self.output += self.write_int(stitch.x - bounds.left)
+        self.output += self.write_int(stitch.y + bounds.top)
 
     def write_image(self, image):
         for i in range(38):
@@ -525,8 +569,8 @@ class BrotherEmbroideryFile():
         stope_code = 2
         for block in pattern.blocks:
             for stitch in block.stitches:
-                deltaX = int(round(stitch.xx - thisX))
-                deltaY = int(round(stitch.yy - thisY))
+                deltaX = int(round(stitch.x - thisX))
+                deltaY = int(round(stitch.y - thisY))
                 thisX += deltaX
                 thisY += deltaY
 
@@ -584,7 +628,7 @@ def pattern_to_csv(pattern, filename):
     for block in pattern.blocks:
 
         for stitch in block.stitches:
-            output_file.write(wrap_string_list(["*", stitch.tags[0], stitch.xx/10.0, 0.1*(pattern.bounds.height-stitch.yy)]))
+            output_file.write(wrap_string_list(["*", stitch.tags[0], stitch.x/10.0, 0.1*(pattern.bounds.height-stitch.y)]))
     output_file.close()
 
 
@@ -634,8 +678,8 @@ def populate_image(pattern, index=None):
             if index is not None:
                 if i != index:
                     continue
-            x = int(round((stitch.xx - pattern.bounds.left) * xFactor)) + 3
-            y = int(round((stitch.yy - pattern.bounds.top) * yFactor)) + 3
+            x = int(round((stitch.x - pattern.bounds.left) * xFactor)) + 3
+            y = int(round((stitch.y - pattern.bounds.top) * yFactor)) + 3
             pattern.image[y][x] = 1
 
 
@@ -655,23 +699,47 @@ def overall_bbox(paths):
     return over_bbox
 
 
-def measure_density(pattern):
-    all_stitches = []
-    for block in pattern.blocks:
-        all_stitches += list(block)
-    boundx = max([s[0] for s in all_stitches]), min([s[0] for s in all_stitches])
-    boundy = max([s[1] for s in all_stitches]), min([s[1] for s in all_stitches])
+def initialize_grid(pattern):
+    boundx = max([s[0] for s in pattern.all_stitches]), min([s[0] for s in pattern.all_stitches])
+    boundy = max([s[1] for s in pattern.all_stitches]), min([s[1] for s in pattern.all_stitches])
     x_bins = int(ceil((boundx[0]-boundx[1])/minimum_stitch))
     y_bins = int(ceil((boundy[0]-boundy[1])/minimum_stitch))
     print(x_bins, y_bins)
     density = [[0 for _ in range(x_bins)] for _ in range(y_bins)]
-    for stitch in all_stitches:
+    return density, boundx, boundy, x_bins, y_bins
+
+
+def measure_density(pattern):
+    density, boundx, boundy, x_bins, y_bins = initialize_grid(pattern)
+    for stitch in pattern.all_stitches:
         i = int((stitch[0] - boundx[1])/minimum_stitch)
         j = int((stitch[1] - boundy[1]) / minimum_stitch)
         density[j][i] += 1
     for i in range(x_bins):
         for j in range(y_bins):
             density[j][i] = density[j][i] if density[j][i] > 3 else 0
+    plot_density(density)
+    for values in density:
+        for value in values:
+            if value > MAX_STITCHES:
+                raise ValueError("stitch density is greater than 3. Check density.png.")
+
+
+def plot_density(density):
+    if isinstance(density, dict):
+        max_x = max(density.keys())
+        min_x = min(density.keys())
+        all_y_keys = []
+        for y_slice in density.values():
+            all_y_keys += y_slice.keys()
+        max_y = max(all_y_keys)
+        min_y = min(all_y_keys)
+        new_density = [[0 for _ in range(min_y, max_y+1)] for _ in range(min_x, max_x+1)]
+        for x, y_slice in density.items():
+            for y, val in density[x].items():
+                new_density[x-min_x][y-min_y] = density[x][y]
+        density = new_density
+
 
     fig, ax = plt.subplots()
     ax.imshow(density)
@@ -679,11 +747,34 @@ def measure_density(pattern):
     plt.colorbar(heatmap)
     fig.savefig('density.png')  # save the figure to file
     plt.close(fig)
-    for values in density:
-        for value in values:
-            if value > 3:
-                raise ValueError("stitch density is greater than 3. Check density.png.")
 
+MAX_STITCHES = 3
+
+def de_densify(pattern):
+    density, boundx, boundy, x_bins, y_bins = initialize_grid(pattern)
+    # convert the density list of lists to a dict
+    density = {i: {j: block for j, block in enumerate(density[i])}
+               for i in range(len(density))}
+    for block_i, block in enumerate(pattern.blocks):
+        for stitch_i, stitch in enumerate(block.stitches):
+            i = int((stitch.x - boundx[1]) / minimum_stitch)
+            j = int((stitch.y - boundy[1]) / minimum_stitch)
+            # if there is room for that stitch, continue
+            if density[j][i] < MAX_STITCHES - 1:
+                density[j][i] += 1
+                continue
+            for next_i, next_j in NextAvailableGrid(i, j):
+                if density[next_j][next_i] > MAX_STITCHES - 1:
+                    continue
+                print("moving stitch from {} {}".format(stitch.x, stitch.y))
+                pattern.blocks[block_i].stitches[stitch_i].x = next_i * minimum_stitch + boundx[1]
+                pattern.blocks[block_i].stitches[stitch_i].y = next_j * minimum_stitch + \
+                                                               boundy[1]
+                print("to {} {}".format(pattern.blocks[block_i].stitches[stitch_i].x, pattern.blocks[block_i].stitches[stitch_i].y))
+                density[next_j][next_i] += 1
+                break
+    plot_density(density)
+    return pattern
 
 
 if __name__ == "__main__":

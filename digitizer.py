@@ -295,10 +295,10 @@ def generate_pattern(all_paths, attributes, scale, fill=True):
         if last_color is not None and last_color != new_color and len(stitches) > 0:
             add_block(stitches)
             to = stitches[-1]
-            block = Block(stitches=[Stitch(["TRIM"], to.xx, to.yy)],
+            block = Block(stitches=[Stitch(["TRIM"], to.x, to.y)],
                           color=last_color)
             pattern.add_block(block)
-            block = Block(stitches=[Stitch(["COLOR"], to.xx, to.yy)],
+            block = Block(stitches=[Stitch(["COLOR"], to.x, to.y)],
                           color=new_color)
             pattern.add_block(block)
             return []
@@ -551,7 +551,7 @@ def generate_pattern(all_paths, attributes, scale, fill=True):
     if len(pattern.blocks[-1].stitches) > 0:
         last_stitch = pattern.blocks[-1].stitches[-1]
         pattern.add_block(
-            Block(stitches=[Stitch(["END"], last_stitch.xx, last_stitch.yy)],
+            Block(stitches=[Stitch(["END"], last_stitch.x, last_stitch.y)],
                 color=pattern.blocks[-1].color))
 
     return pattern
@@ -599,9 +599,11 @@ if __name__ == "__main__":
         pattern = svg_to_pattern(filecontents, args.fill)
     end = time()
     print("digitizer time: %s" % (end - start))
+    pattern = de_densify(pattern)
+    measure_density(pattern)
     pattern_to_csv(pattern, filename + ".csv")
     pattern_to_svg(pattern, filename + ".svg")
-    measure_density(pattern)
+
     bef = BrotherEmbroideryFile(filename + ".pes")
     bef.write_pattern(pattern)
     upload(filename + ".pes")

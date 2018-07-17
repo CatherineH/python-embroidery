@@ -203,10 +203,10 @@ def scan_lines(paths):
 
 def fill_test(stitches, scale, current_grid):
     for i in range(1, len(stitches)):
-        x_lower = min(stitches[i-1].xx/scale, stitches[i].xx/scale)
-        x_upper = max(stitches[i-1].xx/scale, stitches[i].xx/scale)
-        y_lower = min(stitches[i-1].yy/scale, stitches[i].yy/scale)
-        y_upper = max(stitches[i-1].yy/scale, stitches[i].yy/scale)
+        x_lower = min(stitches[i-1].x/scale, stitches[i].x/scale)
+        x_upper = max(stitches[i-1].x/scale, stitches[i].x/scale)
+        y_lower = min(stitches[i-1].y/scale, stitches[i].y/scale)
+        y_upper = max(stitches[i-1].y/scale, stitches[i].y/scale)
 
         curr_x = int(x_lower/minimum_stitch)*minimum_stitch
         while curr_x <= x_upper+minimum_stitch:

@@ -7,7 +7,9 @@ __pycache__
 *.pyc
 debug.svg
 intersection_test.svg
-*.pes
-*.svg
-*.png
+#*.pes
+#*.svg
+#*.png
 png
+test/.cache
+test/.pytest_cache

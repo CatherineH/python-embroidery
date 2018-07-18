@@ -26,8 +26,8 @@ except:
 from numpy import argmax, average, ceil
 from svgpathtools import svgdoc2paths, Line, Path
 
-from .brother import BrotherEmbroideryFile, pattern_to_csv, upload
-from .configure import minimum_stitch, maximum_stitch, DEBUG
+from brother import BrotherEmbroideryFile, pattern_to_csv, upload
+from configure import minimum_stitch, maximum_stitch, DEBUG
 
 fill_method = "scan" #"grid"#"polygon"#"voronoi
 
@@ -44,6 +44,14 @@ class Digitizer(object):
         self.fill = fill
         # stitches is the stitches that have yet to be added to the pattern
         self.stitches = []
+        self.attributes = []
+        self.all_paths = []
+        self.fill_color = None
+        self.last_color = None
+        self.pattern = Pattern()
+
+        if not filename:
+            return
         self.filecontents = open(join("workspace", filename), "r").read()
         if filename.split(".")[-1] != "svg":
             self.image_to_pattern()
@@ -116,32 +124,27 @@ class Digitizer(object):
         if self.fill:
             self.all_paths, self.attributes = stack_paths(self.all_paths, self.attributes)
 
-        self.pattern = Pattern()
-
-        self.last_color = None
-        self.stitches = []
-
         for k, v in enumerate(self.attributes):
             paths = self.all_paths[k]
             # first, look for the color from the fill
             # if fill is false, change the attributes so that the fill is none but the
             # stroke is the fill (if not set)
-            fill_color = get_color(v, "fill")
-            stroke_color = get_color(v, "stroke")
+            self.fill_color = get_color(v, "fill")
+            self.stroke_color = get_color(v, "stroke")
             stroke_width = get_stroke_width(v, self.scale)
             if not self.fill:
-                if not stroke_color:
-                    stroke_color = fill_color
+                if not self.stroke_color:
+                    self.stroke_color = self.fill_color
                 stroke_width = stroke_width if stroke_width != minimum_stitch \
                     else minimum_stitch * 3.0
-                fill_color = None
-            if fill_color is None and stroke_color is None:
-                fill_color = [0, 0, 0]
+                self.fill_color = None
+            if self.fill_color is None and self.stroke_color is None:
+                self.fill_color = [0, 0, 0]
             # if both the fill color and stroke color are none,
-            if fill_color is not None:
-                if len(pattern.blocks) == 0 and fill_color is not None:
-                    pattern.add_block(Block([Stitch(["JUMP"], 0, 0)], color=fill_color))
-                self.switch_color(fill_color)
+            if self.fill_color is not None:
+                if len(self.pattern.blocks) == 0 and self.fill_color is not None:
+                    self.pattern.add_block(Block([Stitch(["JUMP"], 0, 0)], color=self.fill_color))
+                self.switch_color(self.fill_color)
                 full_path = Path(*paths)
                 if fill_method == "polygon":
                     if not full_path.iscontinuous():
@@ -154,26 +157,24 @@ class Digitizer(object):
                     self.fill_scan(paths)
                 elif fill_method == "voronoi":
                     self.fill_voronoi(paths)
-                self.last_color = fill_color
-            if fill_color is not None:
+                self.last_color = self.fill_color
+            if self.fill_color is not None:
                 self.add_block()
             # then do the stroke
-            if stroke_color is None:
+            if self.stroke_color is None:
                 continue
-            self.switch_color(stroke_color)
+            self.switch_color(self.stroke_color)
             paths = self.generate_stroke_width(paths, stroke_width)
-
+            self.generate_straight_stroke(paths)
             if len(self.stitches) > 0:
-                self.last_color = stroke_color
+                self.last_color = self.stroke_color
         self.add_block()
 
-        if len(pattern.blocks[-1].stitches) > 0:
-            last_stitch = pattern.blocks[-1].stitches[-1]
-            pattern.add_block(
+        if len(self.pattern.blocks) > 0 and len(self.pattern.blocks[-1].stitches) > 0:
+            last_stitch = self.pattern.blocks[-1].stitches[-1]
+            self.pattern.add_block(
                 Block(stitches=[Stitch(["END"], last_stitch.x, last_stitch.y)],
-                      color=pattern.blocks[-1].color))
-
-        return pattern
+                      color=self.pattern.blocks[-1].color))
 
     def generate_stroke_width(self, paths, stroke_width):
         # paths = remove_close_paths(paths)
@@ -201,35 +202,37 @@ class Digitizer(object):
             return new_paths
 
     def switch_color(self, new_color):
-        if self.last_color is not None and self.last_color != new_color and len(self.stitches) > 0:
-            self.add_block()
-            to = self.stitches[-1]
-            block = Block(stitches=[Stitch(["TRIM"], to.x, to.y)],
-                          color=self.last_color)
-            pattern.add_block(block)
-            block = Block(stitches=[Stitch(["COLOR"], to.x, to.y)],
-                          color=new_color)
-            pattern.add_block(block)
-            self.stitches = []
+        if self.last_color is None or self.last_color == new_color or len(
+                self.stitches) == 0:
+            return
+        self.add_block()
+        to = self.stitches[-1]
+        block = Block(stitches=[Stitch(["TRIM"], to.x, to.y)],
+                      color=self.last_color)
+        self.pattern.add_block(block)
+        block = Block(stitches=[Stitch(["COLOR"], to.x, to.y)],
+                      color=new_color)
+        self.pattern.add_block(block)
+        self.stitches = []
 
     def generate_straight_stroke(self, paths):
         for i, path in enumerate(paths):
             if path.length() == 0:
                 continue
             to = Stitch(["STITCH"], path.start.real * self.scale,
-                        path.start.imag * self.scale, color=stroke_color)
+                        path.start.imag * self.scale, color=self.stroke_color)
             self.stitches.append(to)
             num_segments = ceil(path.length() / minimum_stitch)
             for seg_i in range(int(num_segments + 1)):
                 control_stitch = Stitch(["STITCH"],
                                         path.point(seg_i / num_segments).real * self.scale,
                                         path.point(seg_i / num_segments).imag * self.scale,
-                                        color=stroke_color)
+                                        color=self.stroke_color)
                 self.stitches.append(control_stitch)
             # if the next stitch doesn't start at the end of this stitch, add that one as
             # well
             end_stitch = Stitch(["STITCH"], path.end.real * self.scale,
-                                path.end.imag * self.scale, color=stroke_color)
+                                path.end.imag * self.scale, color=self.stroke_color)
             if i != len(paths) - 1:
                 if path.end != paths[i + 1].start:
                     self.stitches.append(end_stitch)
@@ -362,16 +365,16 @@ class Digitizer(object):
             point3 = paths[side1].point(current_t + increment)
             to = Stitch(["STITCH"], point1.real * self.scale,
                         point1.imag * self.scale,
-                        color=fill_color)
+                        color=self.fill_color)
             self.stitches.append(to)
             to = Stitch(["STITCH"], point2.real * self.scale,
                         point2.imag * self.scale,
-                        color=fill_color)
+                        color=self.fill_color)
             self.stitches.append(to)
             current_t += increment
             to = Stitch(["STITCH"], point3.real * self.scale,
                         point3.imag * self.scale,
-                        color=fill_color)
+                        color=self.fill_color)
             self.stitches.append(to)
         shapes.append([paths[side1], "none", "orange"])
         shapes.append([paths[side2], "none", "red"])
@@ -391,7 +394,7 @@ class Digitizer(object):
             curr_pos = find_upper_corner()
             to = Stitch(["STITCH"], curr_pos.real * self.scale,
                         curr_pos.imag * self.scale,
-                        color=fill_color)
+                        color=self.fill_color)
             self.stitches.append(to)
             blocks_covered = int(maximum_stitch / minimum_stitch)
             while grid.grid_available(curr_pos):
@@ -405,7 +408,7 @@ class Digitizer(object):
                 going_east = not going_east
                 to = Stitch(["STITCH"], next_pos.real * self.scale,
                             next_pos.imag * self.scale,
-                            color=fill_color)
+                            color=self.fill_color)
                 self.stitches.append(to)
                 curr_pos = next_pos
             draw_fill(grid, paths)
@@ -419,7 +422,7 @@ class Digitizer(object):
 
     def fill_scan(self, paths):
         lines = scan_lines(paths)
-        self.attributes = [{"stroke": fill_color} for i in range(len(lines))]
+        self.attributes = [{"stroke": self.fill_color} for i in range(len(lines))]
         lines, self.attributes = sort_paths(lines, self.attributes)
         if isinstance(lines, list):
             if len(lines) == 0:
@@ -428,15 +431,15 @@ class Digitizer(object):
         else:
             start_point = lines.start
         to = Stitch(["STITCH"], start_point.real * self.scale,
-                    start_point.imag * self.scale, color=fill_color)
+                    start_point.imag * self.scale, color=self.fill_color)
         self.stitches.append(to)
 
         for line in lines:
             to = Stitch(["STITCH"], line.start.real * self.scale,
-                        line.start.imag * self.scale, color=fill_color)
+                        line.start.imag * self.scale, color=self.fill_color)
             self.stitches.append(to)
             to = Stitch(["STITCH"], line.end.real * self.scale,
-                        line.end.imag * self.scale, color=fill_color)
+                        line.end.imag * self.scale, color=self.fill_color)
             self.stitches.append(to)
 
     def cross_stitch_to_pattern(self, _image):
@@ -526,7 +529,7 @@ class Digitizer(object):
             stitchy.append(-intersections[1].imag)
         for i in range(len(stitchx)):
             to = Stitch(["STITCH"], stitchx[i] * self.scale,
-                        -stitchy[i] * self.scale, color=fill_color)
+                        -stitchy[i] * self.scale, color=self.fill_color)
             self.stitches.append(to)
         if PLOTTING:
             plt.plot(stitchx, stitchy, 'g-')

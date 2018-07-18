@@ -8,7 +8,7 @@ import sys
 from PIL import Image
 from StringIO import StringIO
 import webcolors
-from thread import nearest_color
+from embroidery_thread import nearest_color
 
 css2_names_to_hex = webcolors.css2_names_to_hex
 from webcolors import hex_to_rgb, rgb_to_hex

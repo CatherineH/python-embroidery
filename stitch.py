@@ -1,10 +1,10 @@
 class Stitch:
-    def __init__(self, tags=None, xx=0.0, yy=0.0, color=0):
+    def __init__(self, tags=None, x=0.0, y=0.0, color=0):
         if tags is None:
             tags = []
         self.tags = tags
-        self.x = xx
-        self.y = yy
+        self.x = x
+        self.y = y
         self.color = color
 
     @property

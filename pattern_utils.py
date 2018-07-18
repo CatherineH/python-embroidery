@@ -123,6 +123,8 @@ def csv_to_pattern(filename):
 
 
 def initialize_grid(pattern):
+    if len(pattern.all_stitches) == 0:
+        return [[]], 0, 0, 0, 0
     boundx = max([s[0] for s in pattern.all_stitches]), min([s[0] for s in pattern.all_stitches])
     boundy = max([s[1] for s in pattern.all_stitches]), min([s[1] for s in pattern.all_stitches])
     x_bins = int(ceil((boundx[0]-boundx[1])/minimum_stitch))
@@ -148,21 +150,26 @@ def measure_density(pattern):
                 raise ValueError("stitch density is greater than 3. Check density.png.")
 
 
+def density_dict_to_list(density):
+    max_x = max(density.keys())
+    min_x = min(density.keys())
+    all_y_keys = []
+    for y_slice in density.values():
+        all_y_keys += y_slice.keys()
+    if len(all_y_keys) == 0:
+        return [[]]
+    max_y = max(all_y_keys)
+    min_y = min(all_y_keys)
+    new_density = [[0 for _ in range(min_y, max_y + 1)] for _ in range(min_x, max_x + 1)]
+    for x, y_slice in density.items():
+        for y, val in density[x].items():
+            new_density[x - min_x][y - min_y] = density[x][y]
+    return new_density
+
+
 def plot_density(density):
     if isinstance(density, dict):
-        max_x = max(density.keys())
-        min_x = min(density.keys())
-        all_y_keys = []
-        for y_slice in density.values():
-            all_y_keys += y_slice.keys()
-        max_y = max(all_y_keys)
-        min_y = min(all_y_keys)
-        new_density = [[0 for _ in range(min_y, max_y+1)] for _ in range(min_x, max_x+1)]
-        for x, y_slice in density.items():
-            for y, val in density[x].items():
-                new_density[x-min_x][y-min_y] = density[x][y]
-        density = new_density
-
+        density = density_dict_to_list(density)
 
     fig, ax = plt.subplots()
     ax.imshow(density)

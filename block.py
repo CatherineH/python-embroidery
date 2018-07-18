@@ -1,4 +1,4 @@
-from brother import nearest_color, pecThreads
+from embroidery_thread import nearest_color, pecThreads
 
 
 class Block:

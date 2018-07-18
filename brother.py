@@ -4,8 +4,7 @@ from os.path import basename, splitext, getsize, join
 from os import statvfs
 from shutil import copyfile
 
-from pattern_utils import csv_to_pattern
-from thread import pecThreads
+from embroidery_thread import pecThreads
 
 imageWithFrame = [
     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -407,10 +406,3 @@ def upload(pes_filename):
         else:
             copyfile(pes_filename, join(mount_destination, basename(pes_filename)))
 
-
-if __name__ == "__main__":
-    input_file = 'text.svg.csv'
-    pattern = csv_to_pattern(input_file)
-    bef = BrotherEmbroideryFile(input_file + ".pes")
-    bef.write_pattern(pattern)
-    # input_file = 'triangle.csv'

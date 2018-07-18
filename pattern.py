@@ -41,7 +41,7 @@ class Pattern():
     @property
     def thread_colors(self):
         blocks_with_stitches = [block for block in self.blocks if len(block.stitches) > 0]
-        if len(blocks_with_stitches) != len(self.blocks):
+        if len(blocks_with_stitches) != len(self.blocks) or len(blocks_with_stitches) == 0:
             raise ValueError("This pattern has a block with no stitches!")
         # return set([block.color for block in self.blocks])
         # look for trim, or end not color, to signify the end of the pattern

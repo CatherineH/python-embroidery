@@ -1,82 +1,11 @@
 import struct
-import csv
-from os.path import basename, splitext
-from svgpathtools import wsvg, Path, Line
-from numpy import argmin
-from math import ceil
-from configure import *
+from os.path import basename, splitext, getsize, join
 
-if PLOTTING:
-    import matplotlib.pyplot as plt
-else:
-    plt = None
-from configure import *
+from os import statvfs
+from shutil import copyfile
 
-pecThreads = [[[0, 0, 0], "Unknown", ""],
-              [[14, 31, 124], "Prussian Blue", ""],
-              [[10, 85, 163], "Blue", ""],
-              [[0, 135, 119], "Teal Green", ""],
-              [[75, 107, 175], "Cornflower Blue", ""],
-              [[237, 23, 31], "Red", ""],
-              [[209, 92, 0], "Reddish Brown", ""],
-              [[145, 54, 151], "Magenta", ""],
-              [[228, 154, 203], "Light Lilac", ""],
-              [[145, 95, 172], "Lilac", ""],
-              [[158, 214, 125], "Mint Green", ""],
-              [[232, 169, 0], "Deep Gold", ""],
-              [[254, 186, 53], "Orange", ""],
-              [[255, 255, 0], "Yellow", ""],
-              [[112, 188, 31], "Lime Green", ""],
-              [[186, 152, 0], "Brass", ""],
-              [[168, 168, 168], "Silver", ""],
-              [[125, 111, 0], "Russet Brown", ""],
-              [[255, 255, 179], "Cream Brown", ""],
-              [[79, 85, 86], "Pewter", ""],
-              [[0, 0, 0], "Black", ""],
-              [[11, 61, 145], "Ultramarine", ""],
-              [[119, 1, 118], "Royal Purple", ""],
-              [[41, 49, 51], "Dark Gray", ""],
-              [[42, 19, 1], "Dark Brown", ""],
-              [[246, 74, 138], "Deep Rose", ""],
-              [[178, 118, 36], "Light Brown", ""],
-              [[252, 187, 197], "Salmon Pink", ""],
-              [[254, 55, 15], "Vermillion", ""],
-              [[240, 240, 240], "White", ""],
-              [[106, 28, 138], "Violet", ""],
-              [[168, 221, 196], "Seacrest", ""],
-              [[37, 132, 187], "Sky Blue", ""],
-              [[254, 179, 67], "Pumpkin", ""],
-              [[255, 243, 107], "Cream Yellow", ""],
-              [[208, 166, 96], "Khaki", ""],
-              [[209, 84, 0], "Clay Brown", ""],
-              [[102, 186, 73], "Leaf Green", ""],
-              [[19, 74, 70], "Peacock Blue", ""],
-              [[135, 135, 135], "Gray", ""],
-              [[216, 204, 198], "Warm Gray", ""],
-              [[67, 86, 7], "Dark Olive", ""],
-              [[253, 217, 222], "Flesh Pink", ""],
-              [[249, 147, 188], "Pink", ""],
-              [[0, 56, 34], "Deep Green", ""],
-              [[178, 175, 212], "Lavender", ""],
-              [[104, 106, 176], "Wisteria Violet", ""],
-              [[239, 227, 185], "Beige", ""],
-              [[247, 56, 102], "Carmine", ""],
-              [[181, 75, 100], "Amber Red", ""],
-              [[19, 43, 26], "Olive Green", ""],
-              [[199, 1, 86], "Dark Fuschia", ""],
-              [[254, 158, 50], "Tangerine", ""],
-              [[168, 222, 235], "Light Blue", ""],
-              [[0, 103, 62], "Emerald Green", ""],
-              [[78, 41, 144], "Purple", ""],
-              [[47, 126, 32], "Moss Green", ""],
-              [[255, 204, 204], "Flesh Pink", ""],
-              [[255, 217, 17], "Harvest Gold", ""],
-              [[9, 91, 166], "Electric Blue", ""],
-              [[240, 249, 112], "Lemon Yellow", ""],
-              [[227, 243, 91], "Fresh Green", ""],
-              [[255, 153, 0], "Orange", ""],
-              [[255, 240, 141], "Cream Yellow", ""],
-              [[255, 200, 200], "Applique", ""]]
+from pattern_utils import csv_to_pattern
+from thread import pecThreads
 
 imageWithFrame = [
     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -158,139 +87,8 @@ imageWithFrame = [
 ]
 
 
-class Pattern():
-    def __init__(self):
-        self.blocks = []
-        self.stitches = []
-        self.colors = []
-        self.current_color = 0
-        self.image = imageWithFrame
-        self.bounding_box = None
-
-    def add_block(self, block):
-        # does some validation on adding a block
-        if len(block.stitches) == 0:
-            raise ValueError("adding block with no stitches! %s" % block)
-        self.blocks.append(block)
-
-    @property
-    def all_stitches(self):
-        _all_stitches = []
-        for block in self.blocks:
-            _all_stitches += list(block)
-        return _all_stitches
-
-    @property
-    def bounds(self):
-        if self.bounding_box is None:
-            self.bounding_box = calc_bounding_box(self.blocks)
-        return self.bounding_box
-
-    @property
-    def thread_count(self):
-        # go through the list of blocks, tally up the number of times the thread color
-        # changes
-        return len([i for i in range(1, len(self.blocks))
-                    if self.blocks[i - 1].color != self.blocks[i].color]) + 1
-
-    @property
-    def thread_colors(self):
-        blocks_with_stitches = [block for block in self.blocks if len(block.stitches) > 0]
-        if len(blocks_with_stitches) != len(self.blocks):
-            raise ValueError("This pattern has a block with no stitches!")
-        # return set([block.color for block in self.blocks])
-        # look for trim, or end not color, to signify the end of the pattern
-        return [blocks_with_stitches[0].color]+[block.color for block in blocks_with_stitches
-                if "COLOR" in block.stitches[0].tags]
-
-    def __str__(self):
-        output = ""
-        for i, block in enumerate(self.blocks):
-            output += "Block Number: %s, color %s, number of stitches: %s, type: %s\n" % \
-                      (i, block.color, block.num_stitches, block.stitches[-1].tags[0])
-        return output
-
-    def __repr__(self):
-        return self.__str__()
-
-
-def nearest_color(in_color):
-    # if in_color is an int, assume that the nearest color has already been find
-    if isinstance(in_color, int):
-        return in_color
-    if in_color is None:
-        return in_color
-    if "red" in dir(in_color):
-        in_color = [in_color.red, in_color.green, in_color.blue]
-    try:
-        in_color = [float(p) for p in in_color]
-    except:
-        print("failed with in_color", in_color)
-    return argmin(
-        [sum([(in_color[i] - color[0][i]) ** 2 for i in range(3)]) for color in pecThreads
-         if color[1] != 'Unknown']) + 1
-
-
-class Stitch:
-    def __init__(self, tags=[], xx=0.0, yy=0.0, color=0):
-        self.tags = tags
-        self.x = xx
-        self.y = yy
-        self.color = color
-
-    @property
-    def complex(self):
-        return self.x + self.y*1j
-
-    def __str__(self):
-        return "{} {} {}\n".format(self.x, self.y, self.tags[0])
-
-    def __repr__(self):
-        return self.__str__()
-
-
-class Block:
-    # a block is a contiguous set of stitches
-    def __init__(self, stitches=[], color=[0, 0, 0]):
-        self.stitches = stitches
-        self.color = nearest_color(color)
-        if not isinstance(self.color, int):
-            raise ValueError(
-                "block was instantiated with something that was not a color: %s %s" % (
-                    self.color, color))
-
-    @property
-    def stitch_type(self):
-        return 1 if "JUMP" in self.stitches[0].tags else 0
-
-    @property
-    def num_stitches(self):
-        return len(self.stitches)  # - self.stitch_type
-
-
-    @property
-    def tuple_color(self):
-        return tuple(pecThreads[self.color][0])
-
-    def __str__(self):
-        if self.num_stitches == 0:
-            return "Block has no stitches"
-        output = "stitch_type: {}, color: {}, num_stitches: {}\n".format(self.stitch_type,
-                                                                         self.color,
-                                                                         self.num_stitches)
-        for stitch in self.stitches:
-            output += str(stitch)
-        return output
-
-    def __repr__(self):
-        return self.__str__()
-
-    def __iter__(self):
-        for i in range(len(self.stitches)):
-            yield (self.stitches[i].x, self.stitches[i].y)
-
-
 class BoundingBox:
+    # this is only used when calculating the conversion from pattern to PES files
     def __init__(self, left=0, top=0, right=0, bottom=0):
         self.left = left
         self.top = top
@@ -310,78 +108,6 @@ class BoundingBox:
 
     def __repr__(self):
         return self.__str__()
-
-
-# spiral around a point until you find the next available location
-class NextAvailableGrid(object):
-    def __init__(self, i, j):
-        self.i = i # i is the x coordinate
-        self.j = j # j is the y coordinate
-        self.direction = "left"
-        self.stepsize = 1
-        self.current_step = 0
-
-    def __iter__(self):
-        return self
-
-    # Python 3 compatibility
-    def __next__(self):
-        return self.next()
-
-    def next(self):
-        directions = ["left", "down", "right", "up"] # go counter-clockwise
-        # do the transforms
-        if self.direction == "left":
-            self.i += 1
-        if self.direction == "down":
-            self.j += 1
-        if self.direction == "right":
-            self.i -= 1
-        if self.direction == "up":
-            self.j -= 1
-        self.current_step += 1
-        if self.current_step == self.stepsize:
-            self.direction = directions[(directions.index(self.direction) + 1)
-                                        % len(directions)]
-            self.current_step = 0
-            if self.direction in ["right", "left"]:
-                self.stepsize += 1
-
-        return self.i, self.j
-
-def csv_to_pattern(filename):
-    pattern = Pattern()
-    stitches = []
-    # read in the stitch file
-    last_flag = None
-    with open(filename, 'rb') as csvfile:
-        spamreader = csv.reader(csvfile, delimiter=',', quotechar='"')
-        for row in spamreader:
-            if len(row) < 4:
-                continue
-            if row[0] == '*':
-                if row[1] != last_flag and last_flag is not None:
-                    if len(pattern.blocks) == 0:
-                        # prepend the first block with a 0,0 JUMP Stitch
-                        stitches.insert(0, Stitch(["JUMP"], 0, 0))
-                    pattern.blocks.append(Block(stitches=stitches,
-                                                color=pattern.colors[
-                                                    pattern.current_color]))
-                    stitches = []
-                stitches.append(
-                    Stitch([row[1]], float(row[2]) * 10.0, -float(row[3]) * 10.0))
-                if row[1] == "COLOR":
-                    pattern.current_color += 1
-                last_flag = row[1]
-            elif row[0] == "$":
-                pattern.colors.append(row[2:5])
-
-    # add the ending block
-    end_stitch = Stitch(["END"], pattern.blocks[-1].stitches[-1].x,
-                        pattern.blocks[-1].stitches[-1].y)
-    pattern.blocks.append(
-        Block(stitches=[end_stitch], color=pattern.colors[pattern.current_color]))
-    return pattern
 
 
 def calc_bounding_box(blocks):
@@ -632,40 +358,8 @@ def pattern_to_csv(pattern, filename):
     output_file.close()
 
 
-def pattern_to_svg(pattern, filename):
-    if isinstance(filename, str) or isinstance(filename, unicode):
-        output_file = open(filename, "wb")
-    else:
-        output_file = filename
-    paths = []
-    colors = []
-    scale_factor = 0.1 # scale from cm to mm from pes
-    for block in pattern.blocks:
-        block_paths = []
-        last_stitch = None
-        for stitch in block.stitches:
-            if "JUMP" in stitch.tags:
-                last_stitch = stitch
-                continue
-            if last_stitch is None:
-                last_stitch = stitch
-                continue
-            block_paths.append(Line(start=last_stitch.complex*scale_factor,
-                                    end=stitch.complex*scale_factor))
-            last_stitch = stitch
-        if len(block_paths) > 0:
-            colors.append(block.tuple_color)
-            paths.append(Path(*block_paths))
-    dims = overall_bbox(paths)
-    mindim = max(dims[1]-dims[0], dims[3]-dims[2])
-    print("in pattern to svg, overallbbox", overall_bbox(paths))
-    if len(paths) == 0:
-        print("warning: pattern did not generate stitches")
-        return
-    wsvg(paths, colors, filename = output_file, mindim=mindim)
-
-
 def populate_image(pattern, index=None):
+    # this is Brother sewing machine specific
     yFactor = 32.0
     xFactor = 42.0
     if pattern.bounds.height > 0:
@@ -683,98 +377,35 @@ def populate_image(pattern, index=None):
             pattern.image[y][x] = 1
 
 
-def overall_bbox(paths):
-    if not isinstance(paths, list):
-        return paths.bbox()
-    over_bbox = [None, None, None, None]
-    for path in paths:
-        bbox = path.bbox()
-        for i in range(4):
-            if over_bbox[i] is None:
-                over_bbox[i] = bbox[i]
-        over_bbox[0] = min(over_bbox[0], bbox[0])
-        over_bbox[1] = max(over_bbox[1], bbox[1])
-        over_bbox[2] = min(over_bbox[2], bbox[2])
-        over_bbox[3] = max(over_bbox[3], bbox[3])
-    return over_bbox
+def upload(pes_filename):
+    # since this library is sometimes used in web-environments, where subprocesses aren't
+    # allowed, move this import statement to only where it's actually used.
+    from subprocess import check_output
+    mount_points = {}
+    out = check_output(["df"]).split("\n")
+    for line in out:
+        if line.find("/media") >= 0:
+            mount_location = line.split("%")[-1]
+            line = line.split(" ")
+            mount_points[line[0]] = mount_location.strip()
 
+    mount_destination = None
+    for mount_point in mount_points:
+        out = check_output(
+            ["udevadm", "info", "--name=" + mount_point, "--attribute-walk"])
+        if out.find('ATTRS{idVendor}=="04f9"') > 0:
+            print("found brother device, assuming embroidery machine")
+            mount_destination = mount_points[mount_point]
+            break
 
-def initialize_grid(pattern):
-    boundx = max([s[0] for s in pattern.all_stitches]), min([s[0] for s in pattern.all_stitches])
-    boundy = max([s[1] for s in pattern.all_stitches]), min([s[1] for s in pattern.all_stitches])
-    x_bins = int(ceil((boundx[0]-boundx[1])/minimum_stitch))
-    y_bins = int(ceil((boundy[0]-boundy[1])/minimum_stitch))
-    print(x_bins, y_bins)
-    density = [[0 for _ in range(x_bins)] for _ in range(y_bins)]
-    return density, boundx, boundy, x_bins, y_bins
-
-
-def measure_density(pattern):
-    density, boundx, boundy, x_bins, y_bins = initialize_grid(pattern)
-    for stitch in pattern.all_stitches:
-        i = int((stitch[0] - boundx[1])/minimum_stitch)
-        j = int((stitch[1] - boundy[1]) / minimum_stitch)
-        density[j][i] += 1
-    for i in range(x_bins):
-        for j in range(y_bins):
-            density[j][i] = density[j][i] if density[j][i] > 3 else 0
-    plot_density(density)
-    for values in density:
-        for value in values:
-            if value > MAX_STITCHES:
-                raise ValueError("stitch density is greater than 3. Check density.png.")
-
-
-def plot_density(density):
-    if isinstance(density, dict):
-        max_x = max(density.keys())
-        min_x = min(density.keys())
-        all_y_keys = []
-        for y_slice in density.values():
-            all_y_keys += y_slice.keys()
-        max_y = max(all_y_keys)
-        min_y = min(all_y_keys)
-        new_density = [[0 for _ in range(min_y, max_y+1)] for _ in range(min_x, max_x+1)]
-        for x, y_slice in density.items():
-            for y, val in density[x].items():
-                new_density[x-min_x][y-min_y] = density[x][y]
-        density = new_density
-
-
-    fig, ax = plt.subplots()
-    ax.imshow(density)
-    heatmap = ax.pcolor(density, cmap=plt.cm.Blues)
-    plt.colorbar(heatmap)
-    fig.savefig('density.png')  # save the figure to file
-    plt.close(fig)
-
-MAX_STITCHES = 3
-
-def de_densify(pattern):
-    density, boundx, boundy, x_bins, y_bins = initialize_grid(pattern)
-    # convert the density list of lists to a dict
-    density = {i: {j: block for j, block in enumerate(density[i])}
-               for i in range(len(density))}
-    for block_i, block in enumerate(pattern.blocks):
-        for stitch_i, stitch in enumerate(block.stitches):
-            i = int((stitch.x - boundx[1]) / minimum_stitch)
-            j = int((stitch.y - boundy[1]) / minimum_stitch)
-            # if there is room for that stitch, continue
-            if density[j][i] < MAX_STITCHES - 1:
-                density[j][i] += 1
-                continue
-            for next_i, next_j in NextAvailableGrid(i, j):
-                if density[next_j][next_i] > MAX_STITCHES - 1:
-                    continue
-                print("moving stitch from {} {}".format(stitch.x, stitch.y))
-                pattern.blocks[block_i].stitches[stitch_i].x = next_i * minimum_stitch + boundx[1]
-                pattern.blocks[block_i].stitches[stitch_i].y = next_j * minimum_stitch + \
-                                                               boundy[1]
-                print("to {} {}".format(pattern.blocks[block_i].stitches[stitch_i].x, pattern.blocks[block_i].stitches[stitch_i].y))
-                density[next_j][next_i] += 1
-                break
-    plot_density(density)
-    return pattern
+    if mount_destination is None:
+        print("could not find brother embroidery machine to transfer to")
+    else:
+        _statvfs = statvfs(mount_destination)
+        if getsize(pes_filename) > _statvfs.f_frsize * _statvfs.f_bavail:
+            print("file cannot be transfered - not enough space on device")
+        else:
+            copyfile(pes_filename, join(mount_destination, basename(pes_filename)))
 
 
 if __name__ == "__main__":

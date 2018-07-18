@@ -8,6 +8,7 @@ import sys
 from PIL import Image
 from StringIO import StringIO
 import webcolors
+from thread import nearest_color
 
 css2_names_to_hex = webcolors.css2_names_to_hex
 from webcolors import hex_to_rgb, rgb_to_hex
@@ -30,7 +31,7 @@ if PLOTTING:
     import matplotlib.pyplot as plt
 else:
     plt = None
-from brother import *
+
 from svgpathtools import svgdoc2paths, Line, Path, CubicBezier, parse_path
 
 import svgwrite
@@ -98,37 +99,6 @@ def make_equidistant(in_vertices, minimum_step):
             new_y = new_vertices[-1][1]+delta_y*minimum_step/hyp
             new_vertices.append([new_x, new_y])
     return new_vertices
-
-
-def initialize_grid(paths):
-    current_grid = defaultdict(dict)
-    # simplify paths to lines
-    poly_paths = []
-    for path in paths:
-        if path.length() > minimum_stitch:
-            num_segments = ceil(path.length() / minimum_stitch)
-            for seg_i in range(int(num_segments)):
-                poly_paths.append(Line(start=path.point(seg_i/num_segments), end=path.point((seg_i+1)/num_segments)))
-        else:
-            poly_paths.append(Line(start=path.start, end=path.end))
-    bbox = overall_bbox(paths)
-    curr_x = int(bbox[0]/minimum_stitch)*minimum_stitch
-    total_tests = int(bbox[1]-bbox[0])*int(bbox[3]-bbox[2])/(minimum_stitch*minimum_stitch)
-    while curr_x < bbox[1]:
-        curr_y = int(bbox[2]/minimum_stitch)*minimum_stitch
-
-        while curr_y < bbox[3]:
-            test_line = Line(start=curr_x + curr_y * 1j,
-                             end=curr_x + minimum_stitch + (
-                                                           curr_y + minimum_stitch) * 1j)
-            start = time()
-            is_contained = path1_is_contained_in_path2(test_line, Path(*poly_paths))
-            end = time()
-            if is_contained:
-                current_grid[curr_x][curr_y] = False
-            curr_y += minimum_stitch
-        curr_x += minimum_stitch
-    return current_grid
 
 
 def scan_lines(paths):
@@ -396,6 +366,35 @@ def get_color(v, part="fill"):
     else:
         # the color is black
         return None
+
+
+def is_concave(paths):
+    xs = [path.start.real for i, path in enumerate(paths) if i < 4]
+    ys = [path.start.imag for i, path in enumerate(paths) if i < 4]
+    x_range = [min(xs), max(xs)]
+    y_range = [min(ys), max(ys)]
+    for i in range(0, 4):
+        p = paths[i].start
+        if x_range[0] < p.real < x_range[1] and y_range[0] < p.imag < y_range[1]:
+            return True
+    return False
+
+
+
+def overall_bbox(paths):
+    if not isinstance(paths, list):
+        return paths.bbox()
+    over_bbox = [None, None, None, None]
+    for path in paths:
+        bbox = path.bbox()
+        for i in range(4):
+            if over_bbox[i] is None:
+                over_bbox[i] = bbox[i]
+        over_bbox[0] = min(over_bbox[0], bbox[0])
+        over_bbox[1] = max(over_bbox[1], bbox[1])
+        over_bbox[2] = min(over_bbox[2], bbox[2])
+        over_bbox[3] = max(over_bbox[3], bbox[3])
+    return over_bbox
 
 
 def sort_paths(paths, attributes):

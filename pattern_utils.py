@@ -3,7 +3,8 @@ import csv
 from math import ceil
 
 from block import Block
-from configure import minimum_stitch, PLOTTING
+from configure import minimum_stitch, PLOTTING, OUTPUT_DIRECTORY
+from os.path import join
 from pattern import Pattern
 from stitch import Stitch
 
@@ -175,7 +176,7 @@ def plot_density(density):
     ax.imshow(density)
     heatmap = ax.pcolor(density, cmap=plt.cm.Blues)
     plt.colorbar(heatmap)
-    fig.savefig('density.png')  # save the figure to file
+    fig.savefig(join(OUTPUT_DIRECTORY, 'density.png'))  # save the figure to file
     plt.close(fig)
 
 

@@ -109,7 +109,7 @@ class Digitizer(object):
             self.scale = size / height
         self.generate_pattern()
 
-    def add_block(self):
+    def add_block(self, clear=True):
         if len(self.stitches) == 0:
             print("got no stitches in add block!")
         if self.last_color is not None:
@@ -117,7 +117,8 @@ class Digitizer(object):
             self.pattern.add_block(block)
         else:
             print("last color was none, not adding the block")
-        self.stitches = []
+        if clear:
+            self.stitches = []
 
     def generate_pattern(self):
         # cut the paths by the paths above
@@ -126,6 +127,7 @@ class Digitizer(object):
 
         for k, v in enumerate(self.attributes):
             paths = self.all_paths[k]
+
             # first, look for the color from the fill
             # if fill is false, change the attributes so that the fill is none but the
             # stroke is the fill (if not set)
@@ -168,7 +170,9 @@ class Digitizer(object):
             self.generate_straight_stroke(paths)
             if len(self.stitches) > 0:
                 self.last_color = self.stroke_color
-        self.add_block()
+
+        if not self.fill:
+            self.add_block()
 
         if len(self.pattern.blocks) > 0 and len(self.pattern.blocks[-1].stitches) > 0:
             last_stitch = self.pattern.blocks[-1].stitches[-1]
@@ -205,7 +209,7 @@ class Digitizer(object):
         if self.last_color is None or self.last_color == new_color or len(
                 self.stitches) == 0:
             return
-        self.add_block()
+        self.add_block(clear=False)
         to = self.stitches[-1]
         block = Block(stitches=[Stitch(["TRIM"], to.x, to.y)],
                       color=self.last_color)
@@ -240,7 +244,6 @@ class Digitizer(object):
                 self.stitches.append(end_stitch)
 
     def fill_polygon(self, paths):
-
         rotated = 0
         fudge_factor = 0.03
         while len(paths) > 2:
@@ -568,9 +571,9 @@ if __name__ == "__main__":
     print("digitizer time: %s" % (end - start))
     pattern = de_densify(dig.pattern)
     measure_density(pattern)
-    pattern_to_csv(pattern, filename + ".csv")
-    pattern_to_svg(pattern, filename + ".svg")
-
-    bef = BrotherEmbroideryFile(filename + ".pes")
+    pattern_to_csv(pattern, join(OUTPUT_DIRECTORY, filename + ".csv"))
+    pattern_to_svg(pattern, join(OUTPUT_DIRECTORY, filename + ".svg"))
+    pes_filename = join(OUTPUT_DIRECTORY, filename + ".pes")
+    bef = BrotherEmbroideryFile(pes_filename)
     bef.write_pattern(pattern)
-    upload(filename + ".pes")
+    upload(pes_filename)

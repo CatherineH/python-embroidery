@@ -4,3 +4,4 @@ minimum_stitch = 3.0
 maximum_stitch = 50.0
 DEBUG = False
 PLOTTING = True
+OUTPUT_DIRECTORY = "output"

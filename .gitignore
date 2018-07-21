@@ -2,6 +2,8 @@
 
 # workspace is a directory to store all user-created patterns and svgs
 workspace
+# output is a directory to store digitizer output files
+output
 *.csv
 __pycache__
 *.pyc

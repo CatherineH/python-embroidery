@@ -1,6 +1,7 @@
 """A set of functionality to apply to completed patterns"""
 import csv
 from math import ceil
+from time import time
 
 from block import Block
 from configure import minimum_stitch, PLOTTING, OUTPUT_DIRECTORY
@@ -10,6 +11,7 @@ from stitch import Stitch
 
 from svgpathtools import Line, Path, wsvg
 from svgutils import overall_bbox
+from svgwrite import Drawing, rgb
 
 if PLOTTING:
     import matplotlib.pyplot as plt
@@ -29,7 +31,6 @@ class NextAvailableGrid(object):
     def __iter__(self):
         return self
 
-    # Python 3 compatibility
     def __next__(self):
         return self.next()
 
@@ -138,13 +139,13 @@ def initialize_grid(pattern):
 def measure_density(pattern):
     density, boundx, boundy, x_bins, y_bins = initialize_grid(pattern)
     for stitch in pattern.all_stitches:
-        i = int((stitch[0] - boundx[1])/minimum_stitch)
+        i = int((stitch[0] - boundx[1]) / minimum_stitch)
         j = int((stitch[1] - boundy[1]) / minimum_stitch)
         density[j][i] += 1
     for i in range(x_bins):
         for j in range(y_bins):
-            density[j][i] = density[j][i] if density[j][i] > 3 else 0
-    plot_density(density)
+            density[j][i] = density[j][i] # if density[j][i] > 3 else 0
+    plot_density(density, pattern)
     for values in density:
         for value in values:
             if value > MAX_STITCHES:
@@ -168,15 +169,19 @@ def density_dict_to_list(density):
     return new_density
 
 
-def plot_density(density):
+def plot_density(density, pattern):
     if isinstance(density, dict):
         density = density_dict_to_list(density)
 
     fig, ax = plt.subplots()
     ax.imshow(density)
-    heatmap = ax.pcolor(density, cmap=plt.cm.Blues)
-    plt.colorbar(heatmap)
-    fig.savefig(join(OUTPUT_DIRECTORY, 'density.png'))  # save the figure to file
+    heatmap = ax.pcolor(density, cmap=plt.cm.Blues, vmin=0, vmax=8)
+    cbar = plt.colorbar(heatmap)
+    cbar.set_label('Stitch density per cell')
+    x_stitches = [s[0]/minimum_stitch+1 for s in pattern.all_stitches]
+    y_stitches = [s[1]/minimum_stitch+1 for s in pattern.all_stitches]
+    plt.plot(x_stitches, y_stitches, 'r--', alpha=0.5)
+    fig.savefig(join(OUTPUT_DIRECTORY, 'density_{}.png'.format(time())))  # save the figure to file
     plt.close(fig)
 
 
@@ -193,11 +198,11 @@ def de_densify(pattern):
             i = int((stitch.x - boundx[1]) / minimum_stitch)
             j = int((stitch.y - boundy[1]) / minimum_stitch)
             # if there is room for that stitch, continue
-            if density[j][i] < MAX_STITCHES - 1:
+            if density[j][i] <= MAX_STITCHES:
                 density[j][i] += 1
                 continue
             for next_i, next_j in NextAvailableGrid(i, j):
-                if density[next_j][next_i] > MAX_STITCHES - 1:
+                if density[next_j][next_i] >= MAX_STITCHES:
                     continue
                 print("moving stitch from {} {}".format(stitch.x, stitch.y))
                 pattern.blocks[block_i].stitches[stitch_i].x = next_i * minimum_stitch + boundx[1]
@@ -206,5 +211,33 @@ def de_densify(pattern):
                 print("to {} {}".format(pattern.blocks[block_i].stitches[stitch_i].x, pattern.blocks[block_i].stitches[stitch_i].y))
                 density[next_j][next_i] += 1
                 break
-    plot_density(density)
     return pattern
+
+
+if __name__ == "__main__":
+    # make a graph of the next available grid
+    num_grid = 8
+    spacing = 30
+
+    dwg = Drawing(join(OUTPUT_DIRECTORY, "next_available_grid.svg"),
+                  (num_grid*spacing, num_grid*spacing))
+    for x in range(num_grid):
+        dwg.add(dwg.line(start=(0, x*spacing), end=(num_grid*spacing, x*spacing),
+                         stroke=rgb(10, 10, 16, '%')))
+        dwg.add(dwg.line(start=(x * spacing, 0), end=(x * spacing, num_grid * spacing),
+                         stroke=rgb(10, 10, 16, '%')))
+    start_point = [4, 4]
+
+    dwg.add(dwg.rect(insert=(start_point[0]*spacing, start_point[1]*spacing), size=(spacing, spacing),
+                     fill=rgb(100, 100, 16, '%')))
+    count = 0
+    last_point = start_point
+    for next_available in NextAvailableGrid(*start_point):
+        dwg.add(dwg.line(start=((last_point[0]+0.5)*spacing, (last_point[1]+0.5)*spacing),
+                         end=((next_available[0]+0.5)*spacing, (next_available[1]+0.5)*spacing),
+                         stroke=rgb(100, 0, 0, '%')))
+        last_point = next_available
+        count += 1
+        if count > 25:
+            break
+    dwg.save()

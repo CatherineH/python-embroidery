@@ -569,6 +569,10 @@ if __name__ == "__main__":
     dig = Digitizer(filename=filename, fill=args.fill)
     end = time()
     print("digitizer time: %s" % (end - start))
+    try:
+        measure_density(dig.pattern)
+    except ValueError as e:
+        pass
     pattern = de_densify(dig.pattern)
     measure_density(pattern)
     pattern_to_csv(pattern, join(OUTPUT_DIRECTORY, filename + ".csv"))

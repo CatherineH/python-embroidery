@@ -114,7 +114,7 @@ def scan_lines(paths):
     debug_shapes = [[paths, "none", "gray"]]
 
     while current_y < max_pos:
-        current_y += minimum_stitch
+        current_y += MINIMUM_STITCH_LENGTH
 
         if orientation:
             left = min(bbox[0], bbox[1])
@@ -181,15 +181,15 @@ def fill_test(stitches, scale, current_grid):
         y_lower = min(stitches[i-1].y/scale, stitches[i].y/scale)
         y_upper = max(stitches[i-1].y/scale, stitches[i].y/scale)
 
-        curr_x = int(x_lower/minimum_stitch)*minimum_stitch
-        while curr_x <= x_upper+minimum_stitch:
-            curr_y = int(y_lower/minimum_stitch)*minimum_stitch
-            while curr_y <= y_upper+minimum_stitch:
+        curr_x = int(x_lower/MINIMUM_STITCH_LENGTH)*MINIMUM_STITCH_LENGTH
+        while curr_x <= x_upper+MINIMUM_STITCH_LENGTH:
+            curr_y = int(y_lower/MINIMUM_STITCH_LENGTH)*MINIMUM_STITCH_LENGTH
+            while curr_y <= y_upper+MINIMUM_STITCH_LENGTH:
                 if curr_x in current_grid:
                     if curr_y in current_grid[curr_x]:
                         current_grid[curr_x][curr_y] = True
-                curr_y += minimum_stitch
-            curr_x += minimum_stitch
+                curr_y += MINIMUM_STITCH_LENGTH
+            curr_x += MINIMUM_STITCH_LENGTH
     last_point = [max(current_grid), 0]
     all_filled = True
     for curr_x in current_grid:
@@ -234,7 +234,7 @@ def draw_fill(current_grid, paths):
     for curr_x in current_grid:
         for curr_y in current_grid[curr_x]:
             shape = svgwrite.shapes.Rect(insert=(curr_x, curr_y),
-                                         size=(minimum_stitch, minimum_stitch),
+                                         size=(MINIMUM_STITCH_LENGTH, MINIMUM_STITCH_LENGTH),
                                          fill=colors[current_grid[curr_x][curr_y]])
             draw_paths.insert(0, shape)
     write_debug("draw", paths)
@@ -242,7 +242,7 @@ def draw_fill(current_grid, paths):
 
 def remove_close_paths(input_paths):
     if len(input_paths) == 1:
-        if input_paths[0].length() < minimum_stitch:
+        if input_paths[0].length() < MINIMUM_STITCH_LENGTH:
             return []
         else:
             return  input_paths
@@ -257,12 +257,12 @@ def remove_close_paths(input_paths):
             return pi/2.0
         else:
             return asin(y_diff/hyp)
-    paths = [path for path in input_paths if path.length() >= minimum_stitch]
+    paths = [path for path in input_paths if path.length() >= MINIMUM_STITCH_LENGTH]
     # remove any paths that are less than the minimum stitch
-    while len([True for line in paths if line.length() < minimum_stitch]) > 0 \
+    while len([True for line in paths if line.length() < MINIMUM_STITCH_LENGTH]) > 0 \
             or len([paths[i] for i in range(1, len(paths)) if
                     paths[i].start != paths[i - 1].end]) > 0:
-        paths = [path for path in paths if path.length() >= minimum_stitch]
+        paths = [path for path in paths if path.length() >= MINIMUM_STITCH_LENGTH]
         paths = [Line(start=paths[i].start, end=paths[(i + 1) % len(paths)].start)
                  for i in range(0, len(paths))]
 
@@ -283,7 +283,7 @@ def remove_close_paths(input_paths):
         paths = straight_lines
     assert len(
         [i for i in range(1, len(paths)) if paths[i].start != paths[i - 1].end]) == 0
-    assert len([True for line in paths if line.length() < minimum_stitch]) == 0
+    assert len([True for line in paths if line.length() < MINIMUM_STITCH_LENGTH]) == 0
     return paths
 
 
@@ -326,7 +326,7 @@ def get_stroke_width(v, scale):
         if "stroke-width" in style_parts:
             stroke_width = style_parts["stroke-width"]
     if stroke_width is None:
-        return minimum_stitch
+        return MINIMUM_STITCH_LENGTH
     try:
         stroke_width = float(stroke_width)
     except TypeError:
@@ -381,7 +381,6 @@ def is_concave(paths):
         if x_range[0] < p.real < x_range[1] and y_range[0] < p.imag < y_range[1]:
             return True
     return False
-
 
 
 def overall_bbox(paths):
@@ -548,7 +547,7 @@ def path_to_poly(inpath):
         if isinstance(path, Line):
             points.append([path.end.real, path.end.imag])
         else:
-            num_segments = ceil(path.length() / minimum_stitch)
+            num_segments = ceil(path.length() / MINIMUM_STITCH_LENGTH)
             for seg_i in range(int(num_segments + 1)):
                 points.append([path.point(seg_i / num_segments).real,
                                 path.point(seg_i / num_segments).imag])
@@ -571,7 +570,6 @@ def shape_to_path(shape):
                              end=points[i][0] + points[i][1] * 1j))
 
     return Path(*new_path)
-
 
 
 def path_difference_shapely(path1, path2):

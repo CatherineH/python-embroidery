@@ -8,29 +8,29 @@ class Grid:
         # simplify paths to lines
         poly_paths = []
         for path in paths:
-            if path.length() > minimum_stitch:
-                num_segments = ceil(path.length() / minimum_stitch)
+            if path.length() > MINIMUM_STITCH_LENGTH:
+                num_segments = ceil(path.length() / MINIMUM_STITCH_LENGTH)
                 for seg_i in range(int(num_segments)):
                     poly_paths.append(Line(start=path.point(seg_i/num_segments), end=path.point((seg_i+1)/num_segments)))
             else:
                 poly_paths.append(Line(start=path.start, end=path.end))
         bbox = overall_bbox(paths)
-        curr_x = int(bbox[0]/minimum_stitch)*minimum_stitch
-        total_tests = int(bbox[1]-bbox[0])*int(bbox[3]-bbox[2])/(minimum_stitch*minimum_stitch)
+        curr_x = int(bbox[0]/MINIMUM_STITCH_LENGTH)*MINIMUM_STITCH_LENGTH
+        total_tests = int(bbox[1]-bbox[0])*int(bbox[3]-bbox[2])/(MINIMUM_STITCH_LENGTH*MINIMUM_STITCH_LENGTH)
         while curr_x < bbox[1]:
-            curr_y = int(bbox[2]/minimum_stitch)*minimum_stitch
+            curr_y = int(bbox[2]/MINIMUM_STITCH_LENGTH)*MINIMUM_STITCH_LENGTH
 
             while curr_y < bbox[3]:
                 test_line = Line(start=curr_x + curr_y * 1j,
-                                 end=curr_x + minimum_stitch + (
-                                                               curr_y + minimum_stitch) * 1j)
+                                 end=curr_x + MINIMUM_STITCH_LENGTH + (
+                                                               curr_y + MINIMUM_STITCH_LENGTH) * 1j)
                 start = time()
                 is_contained = path1_is_contained_in_path2(test_line, Path(*poly_paths))
                 end = time()
                 if is_contained:
                     current_grid[curr_x][curr_y] = False
-                curr_y += minimum_stitch
-            curr_x += minimum_stitch
+                curr_y += MINIMUM_STITCH_LENGTH
+            curr_x += MINIMUM_STITCH_LENGTH
         self.current_grid = current_grid
 
     def grid_available(self, pos):

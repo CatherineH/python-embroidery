@@ -4,7 +4,8 @@ from math import ceil
 from time import time
 
 from block import Block
-from configure import minimum_stitch, PLOTTING, OUTPUT_DIRECTORY
+from configure import MINIMUM_STITCH_LENGTH, PLOTTING, OUTPUT_DIRECTORY, \
+    MINIMUM_STITCH_DISTANCE
 from os.path import join
 from pattern import Pattern
 from stitch import Stitch
@@ -129,8 +130,8 @@ def initialize_grid(pattern):
         return [[]], 0, 0, 0, 0
     boundx = max([s[0] for s in pattern.all_stitches]), min([s[0] for s in pattern.all_stitches])
     boundy = max([s[1] for s in pattern.all_stitches]), min([s[1] for s in pattern.all_stitches])
-    x_bins = int(ceil((boundx[0]-boundx[1])/minimum_stitch))
-    y_bins = int(ceil((boundy[0]-boundy[1])/minimum_stitch))
+    x_bins = int(ceil((boundx[0]-boundx[1])/MINIMUM_STITCH_DISTANCE))
+    y_bins = int(ceil((boundy[0]-boundy[1])/MINIMUM_STITCH_DISTANCE))
     print(x_bins, y_bins)
     density = [[0 for _ in range(x_bins)] for _ in range(y_bins)]
     return density, boundx, boundy, x_bins, y_bins
@@ -139,8 +140,8 @@ def initialize_grid(pattern):
 def measure_density(pattern):
     density, boundx, boundy, x_bins, y_bins = initialize_grid(pattern)
     for stitch in pattern.all_stitches:
-        i = int((stitch[0] - boundx[1]) / minimum_stitch)
-        j = int((stitch[1] - boundy[1]) / minimum_stitch)
+        i = int((stitch[0] - boundx[1]) / MINIMUM_STITCH_DISTANCE)
+        j = int((stitch[1] - boundy[1]) / MINIMUM_STITCH_DISTANCE)
         density[j][i] += 1
     for i in range(x_bins):
         for j in range(y_bins):
@@ -149,7 +150,7 @@ def measure_density(pattern):
     for values in density:
         for value in values:
             if value > MAX_STITCHES:
-                raise ValueError("stitch density is greater than 3. Check density.png.")
+                raise ValueError("stitch density {} is greater than {}. Check density.png.".format(value, MAX_STITCHES))
 
 
 def density_dict_to_list(density):
@@ -178,8 +179,8 @@ def plot_density(density, pattern):
     heatmap = ax.pcolor(density, cmap=plt.cm.Blues, vmin=0, vmax=8)
     cbar = plt.colorbar(heatmap)
     cbar.set_label('Stitch density per cell')
-    x_stitches = [s[0]/minimum_stitch+1 for s in pattern.all_stitches]
-    y_stitches = [s[1]/minimum_stitch+1 for s in pattern.all_stitches]
+    x_stitches = [s[0]/MINIMUM_STITCH_DISTANCE+1 for s in pattern.all_stitches]
+    y_stitches = [s[1]/MINIMUM_STITCH_DISTANCE+1 for s in pattern.all_stitches]
     plt.plot(x_stitches, y_stitches, 'r--', alpha=0.5)
     fig.savefig(join(OUTPUT_DIRECTORY, 'density_{}.png'.format(time())))  # save the figure to file
     plt.close(fig)
@@ -195,18 +196,21 @@ def de_densify(pattern):
                for i in range(len(density))}
     for block_i, block in enumerate(pattern.blocks):
         for stitch_i, stitch in enumerate(block.stitches):
-            i = int((stitch.x - boundx[1]) / minimum_stitch)
-            j = int((stitch.y - boundy[1]) / minimum_stitch)
+            i = int((stitch.x - boundx[1]) / MINIMUM_STITCH_DISTANCE)
+            j = int((stitch.y - boundy[1]) / MINIMUM_STITCH_DISTANCE)
             # if there is room for that stitch, continue
-            if density[j][i] <= MAX_STITCHES:
+            if density[j][i] < MAX_STITCHES:
                 density[j][i] += 1
                 continue
             for next_i, next_j in NextAvailableGrid(i, j):
+                if next_i >= x_bins or next_j >= y_bins:
+                    continue
+                print(next_i, next_j, x_bins, y_bins)
                 if density[next_j][next_i] >= MAX_STITCHES:
                     continue
                 print("moving stitch from {} {}".format(stitch.x, stitch.y))
-                pattern.blocks[block_i].stitches[stitch_i].x = next_i * minimum_stitch + boundx[1]
-                pattern.blocks[block_i].stitches[stitch_i].y = next_j * minimum_stitch + \
+                pattern.blocks[block_i].stitches[stitch_i].x = next_i * MINIMUM_STITCH_DISTANCE + boundx[1]
+                pattern.blocks[block_i].stitches[stitch_i].y = next_j * MINIMUM_STITCH_DISTANCE + \
                                                                boundy[1]
                 print("to {} {}".format(pattern.blocks[block_i].stitches[stitch_i].x, pattern.blocks[block_i].stitches[stitch_i].y))
                 density[next_j][next_i] += 1

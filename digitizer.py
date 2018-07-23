@@ -27,7 +27,7 @@ from numpy import argmax, average, ceil
 from svgpathtools import svgdoc2paths, Line, Path
 
 from brother import BrotherEmbroideryFile, pattern_to_csv, upload
-from configure import minimum_stitch, maximum_stitch, DEBUG
+from configure import MINIMUM_STITCH_LENGTH, maximum_stitch, DEBUG
 
 fill_method = "scan" #"grid"#"polygon"#"voronoi
 
@@ -137,8 +137,8 @@ class Digitizer(object):
             if not self.fill:
                 if not self.stroke_color:
                     self.stroke_color = self.fill_color
-                stroke_width = stroke_width if stroke_width != minimum_stitch \
-                    else minimum_stitch * 3.0
+                stroke_width = stroke_width if stroke_width != MINIMUM_STITCH_LENGTH \
+                    else MINIMUM_STITCH_LENGTH * 3.0
                 self.fill_color = None
             if self.fill_color is None and self.stroke_color is None:
                 self.fill_color = [0, 0, 0]
@@ -182,11 +182,15 @@ class Digitizer(object):
 
     def generate_stroke_width(self, paths, stroke_width):
         # paths = remove_close_paths(paths)
-        # how many times can the minimum_stitch fit in the stroke width?
-        # if it is greater 1, duplicate the stitch offset by the minimum stitch
-        if stroke_width / minimum_stitch > 1.:
-            new_paths = []
-            for i in range(0, int(stroke_width / minimum_stitch)):
+        all_paths = Path(*paths).continuous_subpaths()
+        new_paths = []
+        if stroke_width / MINIMUM_STITCH_DISTANCE <= 1.:
+            return paths
+
+        for paths in all_paths:
+            # how many times can the MINIMUM_STITCH_DISTANCE fit in the stroke width?
+            # if it is greater 1, duplicate the stitch offset by the minimum stitch
+            for i in range(0, int(stroke_width / MINIMUM_STITCH_DISTANCE)):
                 for path in paths:
                     if i == 0:
                         new_paths.append(path)
@@ -198,12 +202,12 @@ class Digitizer(object):
                                     for t in range(int(num_norm_samples))])
 
                     diff *= -1 if i % 2 == 0 else 1
-                    diff *= ceil(i / 2.0) * minimum_stitch / 2.0
+                    diff *= ceil(i / 2.0) * MINIMUM_STITCH_DISTANCE / 2.0
 
                     # if i is odd, translate up/left, if even, translate down/right
                     new_paths.append(path.translated(diff))
 
-            return new_paths
+        return new_paths
 
     def switch_color(self, new_color):
         if self.last_color is None or self.last_color == new_color or len(
@@ -226,7 +230,7 @@ class Digitizer(object):
             to = Stitch(["STITCH"], path.start.real * self.scale,
                         path.start.imag * self.scale, color=self.stroke_color)
             self.stitches.append(to)
-            num_segments = ceil(path.length() / minimum_stitch)
+            num_segments = ceil(path.length() / MINIMUM_STITCH_LENGTH)
             for seg_i in range(int(num_segments + 1)):
                 control_stitch = Stitch(["STITCH"],
                                         path.point(seg_i / num_segments).real * self.scale,
@@ -351,7 +355,7 @@ class Digitizer(object):
     def fill_shape(self, side1, side2, paths, shapes):
         if paths[side1].length() == 0:
             return
-        increment = 3 * minimum_stitch / paths[side1].length()
+        increment = 3 * MINIMUM_STITCH_LENGTH / paths[side1].length()
         current_t = 0
         # make closed shape
 
@@ -399,15 +403,15 @@ class Digitizer(object):
                         curr_pos.imag * self.scale,
                         color=self.fill_color)
             self.stitches.append(to)
-            blocks_covered = int(maximum_stitch / minimum_stitch)
+            blocks_covered = int(maximum_stitch / MINIMUM_STITCH_LENGTH)
             while grid.grid_available(curr_pos):
                 for i in range(0, blocks_covered):
                     sign = 1.0 if going_east else -1.0
-                    test_pos = curr_pos + sign * i * minimum_stitch
+                    test_pos = curr_pos + sign * i * MINIMUM_STITCH_LENGTH
                     if not grid.grid_available(test_pos):
                         break
                     else:
-                        next_pos = test_pos + 1j * minimum_stitch
+                        next_pos = test_pos + 1j * MINIMUM_STITCH_LENGTH
                 going_east = not going_east
                 to = Stitch(["STITCH"], next_pos.real * self.scale,
                             next_pos.imag * self.scale,
@@ -448,7 +452,7 @@ class Digitizer(object):
     def cross_stitch_to_pattern(self, _image):
         # this doesn't work well for images with more than 2-3 colors
         max_dimension = max(_image.size)
-        pixel_ratio = int(max_dimension*minimum_stitch/(4*25.4))
+        pixel_ratio = int(max_dimension*MINIMUM_STITCH_LENGTH/(4*25.4))
         if pixel_ratio != 0:
             _image = _image.resize((_image.size[0]/pixel_ratio, _image.size[1]/pixel_ratio))
         pixels = posturize(_image)
@@ -463,7 +467,7 @@ class Digitizer(object):
                 y = pixel[1]
                 attrs.append({"fill": "none", "stroke": rgb})
                 paths.append(Path(Line(start=x + 1j * y,
-                                       end=x + 0.5 * minimum_stitch + 1j * (y + minimum_stitch))))
+                                       end=x + 0.5 * MINIMUM_STITCH_LENGTH + 1j * (y + MINIMUM_STITCH_LENGTH))))
         debug_paths = [[path, attrs[i]["fill"], attrs[i]["stroke"]] for i, path in enumerate(paths)]
         write_debug("png", debug_paths)
         self.all_paths = paths
@@ -509,7 +513,7 @@ class Digitizer(object):
                     for i in range(0, len(vertices) - 3)]
         vertices = [[average(x[0]), average(x[1])] for x in vertices]
         # we want each vertice to be about equidistant
-        vertices = make_equidistant(vertices, minimum_stitch / 2.0)
+        vertices = make_equidistant(vertices, MINIMUM_STITCH_LENGTH / 2.0)
         xs = [x[0] for x in vertices]
         ys = [-x[1] for x in vertices]
         if PLOTTING:

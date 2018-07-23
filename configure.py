@@ -2,7 +2,7 @@
 # is 5 mm
 MINIMUM_STITCH_LENGTH = 6.0
 MINIMUM_STITCH_DISTANCE = 3.0
-maximum_stitch = 50.0
+maximum_stitch = 6.0
 DEBUG = False
 PLOTTING = True
 OUTPUT_DIRECTORY = "output"

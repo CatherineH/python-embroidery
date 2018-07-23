@@ -1,11 +1,18 @@
 import argparse
+from time import time
+from xml.dom.minidom import parseString
 
 from block import Block
+from grid import Grid
+from os.path import join
 from pattern import Pattern
 from pattern_utils import de_densify, measure_density, pattern_to_svg
 from stitch import Stitch
-from svgutils import *
-
+from svgutils import scan_lines, stack_paths, trace_image, sort_paths, overall_bbox, \
+    get_color, get_stroke_width, make_continuous, write_debug, remove_close_paths, \
+    path1_is_contained_in_path2, shorter_side, is_concave, draw_fill, posturize, \
+    make_equidistant, perpendicular
+from configure import PLOTTING, MINIMUM_STITCH_DISTANCE, OUTPUT_DIRECTORY
 
 if PLOTTING:
     from scipy.spatial.qhull import Voronoi
@@ -396,9 +403,9 @@ class Digitizer(object):
         going_east = True
 
         rounds = 1
-        num_empty = count_empty()
+        num_empty = grid.count_empty()
         while num_empty > 0:
-            curr_pos = find_upper_corner()
+            curr_pos = grid.find_upper_corner()
             to = Stitch(["STITCH"], curr_pos.real * self.scale,
                         curr_pos.imag * self.scale,
                         color=self.fill_color)
@@ -419,7 +426,7 @@ class Digitizer(object):
                 self.stitches.append(to)
                 curr_pos = next_pos
             draw_fill(grid, paths)
-            new_num_empty = count_empty()
+            new_num_empty = grid.count_empty()
             if new_num_empty == num_empty:
                 print("fill was not able to fill any parts of the grid!")
                 break
@@ -572,7 +579,9 @@ if __name__ == "__main__":
     filename = args.filename
     dig = Digitizer(filename=filename, fill=args.fill)
     end = time()
+    filename += ".fill" if args.fill else ""
     print("digitizer time: %s" % (end - start))
+    # remove previous density files
     try:
         measure_density(dig.pattern)
     except ValueError as e:

@@ -1,3 +1,13 @@
+from collections import defaultdict
+from time import time
+
+from configure import MINIMUM_STITCH_LENGTH
+from math import ceil
+
+from svgpathtools import Line, Path
+from svgutils import overall_bbox, path1_is_contained_in_path2
+
+
 class Grid:
     def __init__(self, paths):
         self.paths = paths
@@ -7,14 +17,14 @@ class Grid:
         current_grid = defaultdict(dict)
         # simplify paths to lines
         poly_paths = []
-        for path in paths:
+        for path in self.paths:
             if path.length() > MINIMUM_STITCH_LENGTH:
                 num_segments = ceil(path.length() / MINIMUM_STITCH_LENGTH)
                 for seg_i in range(int(num_segments)):
                     poly_paths.append(Line(start=path.point(seg_i/num_segments), end=path.point((seg_i+1)/num_segments)))
             else:
                 poly_paths.append(Line(start=path.start, end=path.end))
-        bbox = overall_bbox(paths)
+        bbox = overall_bbox(self.paths)
         curr_x = int(bbox[0]/MINIMUM_STITCH_LENGTH)*MINIMUM_STITCH_LENGTH
         total_tests = int(bbox[1]-bbox[0])*int(bbox[3]-bbox[2])/(MINIMUM_STITCH_LENGTH*MINIMUM_STITCH_LENGTH)
         while curr_x < bbox[1]:

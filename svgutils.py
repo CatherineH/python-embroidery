@@ -114,7 +114,7 @@ def scan_lines(paths):
     debug_shapes = [[paths, "none", "gray"]]
 
     while current_y < max_pos:
-        current_y += MINIMUM_STITCH_LENGTH
+        current_y += MINIMUM_STITCH_DISTANCE
 
         if orientation:
             left = min(bbox[0], bbox[1])

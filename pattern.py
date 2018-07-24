@@ -5,7 +5,6 @@ class Pattern():
     def __init__(self):
         self.blocks = []
         self.stitches = []
-        self.colors = []
         self.current_color = 0
         # this is Brother sewing machine specific - generates the image that appears in
         # the LCD screen

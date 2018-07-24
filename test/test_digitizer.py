@@ -1,4 +1,4 @@
-from configure import minimum_stitch
+from configure import MINIMUM_STITCH_LENGTH, MINIMUM_STITCH_DISTANCE
 from stitch import Stitch
 from svgpathtools import Path, Line
 
@@ -28,6 +28,31 @@ def test_generate_pattern(fill):
     dig.generate_pattern()
     assert len(dig.pattern.blocks) > 0
     assert len(dig.pattern.blocks[0].stitches) > 0
+
+
+@pytest.mark.parametrize("fill", [(True), (False)])
+def test_generate_pattern_colors(fill):
+    dig = Digitizer()
+    diff = 110
+    blo = Path(*[Line(start=0, end=100), Line(start=100, end=100 + 100j),
+                 Line(start=100 + 100j, end=100j), Line(start=100j, end=0)])
+    dig.all_paths = [blo, blo.translated(diff)]
+    dig.attributes = [{"fill": "black"}, {"fill": "red"}]
+    dig.scale = 1.0
+    dig.fill = fill
+    dig.generate_pattern()
+
+    print([(i, block.stitches[0].tags) for i, block in enumerate(dig.pattern.blocks)])
+    assert len(dig.pattern.thread_colors) == 2
+    assert len(dig.pattern.blocks[0].stitches) > 0
+    assert "JUMP" in dig.pattern.blocks[0].stitches[0].tags
+    assert "STITCH" in dig.pattern.blocks[1].stitches[0].tags
+    assert "TRIM" in dig.pattern.blocks[2].stitches[0].tags
+    assert "COLOR" in dig.pattern.blocks[3].stitches[0].tags
+    assert "STITCH" in dig.pattern.blocks[4].stitches[0].tags
+    assert "END" in dig.pattern.blocks[5].stitches[0].tags
+    assert len(dig.pattern.blocks[4].stitches) > 0
+
 
 
 def test_fill_scan():
@@ -69,7 +94,7 @@ def test_generate_stroke_width():
     dig = Digitizer()
     paths = [Path(*[Line(start=0, end=100), Line(start=100, end=100+100j),
                             Line(start=100+100j, end=100j), Line(start=100j, end=0)])]
-    new_paths = dig.generate_stroke_width(paths, 3*minimum_stitch)
+    new_paths = dig.generate_stroke_width(paths, 3*MINIMUM_STITCH_DISTANCE)
     assert len(new_paths) == len(paths)*3
 
 

@@ -55,6 +55,7 @@ class Digitizer(object):
         self.all_paths = []
         self.fill_color = None
         self.last_color = None
+        self.last_stitch = None
         self.pattern = Pattern()
 
         if not filename:
@@ -125,16 +126,15 @@ class Digitizer(object):
         else:
             print("last color was none, not adding the block")
         if clear:
+            self.last_stitch = self.stitches[-1]
             self.stitches = []
 
     def generate_pattern(self):
         # cut the paths by the paths above
         if self.fill:
             self.all_paths, self.attributes = stack_paths(self.all_paths, self.attributes)
-
         for k, v in enumerate(self.attributes):
             paths = self.all_paths[k]
-
             # first, look for the color from the fill
             # if fill is false, change the attributes so that the fill is none but the
             # stroke is the fill (if not set)
@@ -154,8 +154,8 @@ class Digitizer(object):
                 if len(self.pattern.blocks) == 0 and self.fill_color is not None:
                     self.pattern.add_block(Block([Stitch(["JUMP"], 0, 0)], color=self.fill_color))
                 self.switch_color(self.fill_color)
-                full_path = Path(*paths)
                 if fill_method == "polygon":
+                    full_path = Path(*paths)
                     if not full_path.iscontinuous():
                         self.fill_polygon(make_continuous(full_path))
                     else:
@@ -167,7 +167,6 @@ class Digitizer(object):
                 elif fill_method == "voronoi":
                     self.fill_voronoi(paths)
                 self.last_color = self.fill_color
-            if self.fill_color is not None:
                 self.add_block()
             # then do the stroke
             if self.stroke_color is None:
@@ -217,11 +216,10 @@ class Digitizer(object):
         return new_paths
 
     def switch_color(self, new_color):
-        if self.last_color is None or self.last_color == new_color or len(
-                self.stitches) == 0:
+        if self.last_color is None or self.last_color == new_color \
+                or self.last_stitch is None:
             return
-        self.add_block(clear=False)
-        to = self.stitches[-1]
+        to = self.last_stitch
         block = Block(stitches=[Stitch(["TRIM"], to.x, to.y)],
                       color=self.last_color)
         self.pattern.add_block(block)
@@ -478,7 +476,7 @@ class Digitizer(object):
         debug_paths = [[path, attrs[i]["fill"], attrs[i]["stroke"]] for i, path in enumerate(paths)]
         write_debug("png", debug_paths)
         self.all_paths = paths
-        self.attributes = attributes
+        self.attributes = attrs
         self.scale = 1.0
         self.generate_pattern()
 

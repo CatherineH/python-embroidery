@@ -174,11 +174,14 @@ class Digitizer(object):
             self.switch_color(self.stroke_color)
             paths = self.generate_stroke_width(paths, stroke_width)
             self.generate_straight_stroke(paths)
+            self.last_color = self.stroke_color
+            if len(self.pattern.blocks) == 0 and self.stroke_color is not None:
+                self.pattern.add_block(
+                    Block([Stitch(["JUMP"], 0, 0)], color=self.stroke_color))
+            if self.stroke_color:
+                self.add_block()
             if len(self.stitches) > 0:
                 self.last_color = self.stroke_color
-
-        if not self.fill:
-            self.add_block()
 
         if len(self.pattern.blocks) > 0 and len(self.pattern.blocks[-1].stitches) > 0:
             last_stitch = self.pattern.blocks[-1].stitches[-1]
@@ -216,6 +219,7 @@ class Digitizer(object):
         return new_paths
 
     def switch_color(self, new_color):
+        print(self.last_color, new_color, self.last_stitch)
         if self.last_color is None or self.last_color == new_color \
                 or self.last_stitch is None:
             return

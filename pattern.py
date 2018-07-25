@@ -10,6 +10,8 @@ class Pattern():
         # the LCD screen
         self.image = imageWithFrame
         self.bounding_box = None
+        # colors is just a holder for values for parsing in values
+        self.colors = []
 
     def add_block(self, block):
         # does some validation on adding a block

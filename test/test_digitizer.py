@@ -66,15 +66,14 @@ def test_fill_scan():
     assert len(dig.stitches) > 0
 
 
-@patch.object(Digitizer, "add_block")
-def test_switch_color(mock_add_block):
+def test_switch_color():
     dig = Digitizer()
+    dig.last_stitch = Stitch(["TRIM"], 0, 0)
     input_stitches = [Stitch(x=0, y=0), Stitch(x=100, y=0), Stitch(x=100, y=100)]
     dig.stitches = input_stitches
     dig.last_color = 0
     new_color = 1
     dig.switch_color(new_color)
-    mock_add_block.assert_called_once()
     assert "TRIM" in dig.pattern.blocks[-2].stitches[-1].tags
     assert "COLOR" in dig.pattern.blocks[-1].stitches[-1].tags
 

@@ -58,3 +58,8 @@ class Pattern():
 
     def __repr__(self):
         return self.__str__()
+
+    def __iter__(self):
+        for block in self.blocks:
+            for stitch in block.stitches:
+                yield stitch

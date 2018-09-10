@@ -1,4 +1,6 @@
 from configure import MINIMUM_STITCH_LENGTH, MINIMUM_STITCH_DISTANCE
+from os.path import join
+from pattern_utils import pattern_to_svg
 from stitch import Stitch
 from svgpathtools import Path, Line
 
@@ -6,6 +8,8 @@ from digitizer import Digitizer
 from mock import patch
 
 import pytest
+from svgwrite import Drawing
+
 
 
 @patch.object(Digitizer, "generate_pattern")
@@ -105,3 +109,37 @@ def test_generate_straight_stroke():
     dig.scale = 1.0
     dig.generate_straight_stroke(paths)
     assert len(dig.stitches) > len(paths)
+
+
+def test_jump_reduction():
+    paths = []
+    rect_width = 100
+    rect_height = rect_width / 2
+    for i in range(3):
+        y_offset = rect_width*i*1j
+        corners = [rect_height, rect_width+rect_height,
+                   rect_width+rect_height + rect_height*1j,
+                   rect_height*1j+ rect_height]
+        corners = [c+y_offset for c in corners]
+        lines = [Line(start=corners[j], end=corners[(j+1) % len(corners)])
+                 for j in range(len(corners))]
+        _path = Path(*lines)
+        _path = _path.rotated(i*20)
+        paths += list(_path)
+
+    max_y = max([p.start.imag for p in paths]+[p.end.imag for p in paths])
+    max_x = max([p.start.real for p in paths]+[p.end.real for p in paths])
+    filename = "test_jump_reduction.svg"
+    viewbox = [0, -rect_height, max_x+2*rect_height, max_y+2*rect_height]
+    dwg = Drawing(filename, width="10cm",
+                  viewBox=" ".join([str(b) for b in viewbox]))
+    dwg.add(dwg.path(d=Path(*paths).d()))
+    dwg.save()
+    dig = Digitizer()
+    dig.filecontents = open(filename, "r").read()
+    dig.svg_to_pattern()
+    pattern_to_svg(dig.pattern, join(filename + ".svg"))
+
+
+
+

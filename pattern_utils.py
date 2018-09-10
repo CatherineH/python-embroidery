@@ -132,7 +132,6 @@ def initialize_grid(pattern):
     boundy = max([s[1] for s in pattern.all_stitches]), min([s[1] for s in pattern.all_stitches])
     x_bins = int(ceil((boundx[0]-boundx[1])/MINIMUM_STITCH_DISTANCE))
     y_bins = int(ceil((boundy[0]-boundy[1])/MINIMUM_STITCH_DISTANCE))
-    print(x_bins, y_bins)
     density = [[0 for _ in range(x_bins)] for _ in range(y_bins)]
     return density, boundx, boundy, x_bins, y_bins
 
@@ -205,18 +204,53 @@ def de_densify(pattern):
             for next_i, next_j in NextAvailableGrid(i, j):
                 if next_i >= x_bins or next_j >= y_bins:
                     continue
-                print(next_i, next_j, x_bins, y_bins)
                 if density[next_j][next_i] >= MAX_STITCHES:
                     continue
-                print("moving stitch from {} {}".format(stitch.x, stitch.y))
                 pattern.blocks[block_i].stitches[stitch_i].x = next_i * MINIMUM_STITCH_DISTANCE + boundx[1]
                 pattern.blocks[block_i].stitches[stitch_i].y = next_j * MINIMUM_STITCH_DISTANCE + \
                                                                boundy[1]
-                print("to {} {}".format(pattern.blocks[block_i].stitches[stitch_i].x, pattern.blocks[block_i].stitches[stitch_i].y))
                 density[next_j][next_i] += 1
                 break
     return pattern
 
+
+def shorten_jumps(pattern):
+    # first, calculate the distribution of jump stitches in the pattern
+    jump_stitches = []
+    _stitches = list(pattern)
+    count_under = 0
+    for i, stitch in enumerate(_stitches):
+        dist = abs(_stitches[i-1] - stitch)
+        if dist > MINIMUM_STITCH_LENGTH:
+            jump_stitches.append(dist)
+        else:
+            count_under += 1
+    fig, ax = plt.subplots()
+    _ = ax.hist(jump_stitches, 'auto', facecolor='g', alpha=0.75)
+
+    ax.set_xlabel('Jump Length')
+    ax.set_ylabel('Probability')
+    fig.savefig(join(OUTPUT_DIRECTORY, 'histogram_{}.png'.format(time())))  # save the figure to file
+    plt.close(fig)
+
+
+'''
+def sort_stitches(stitches, start_location):
+    # takes as input a list of stitches, and sorts them to reduce jumps
+    paths_to_add = [(x, 0) for x in paths_to_add] + [(x, 1) for x in paths_to_add]
+    while len(paths_to_add) > 0:
+        # sort the paths by their distance to the top left corner of the block
+        paths_to_add = sorted(paths_to_add,
+                              key=lambda x: abs(
+                                  start_location - paths[x[0]].point(x[1])))
+        path_to_add = paths_to_add.pop(0)
+        assert output_paths[-1] is not None
+        output_attributes.append(attributes[path_to_add[0]])
+        # filter out the reverse path
+        paths_to_add = [p for p in paths_to_add if p[0] != path_to_add[0]]
+        start_location = paths[path_to_add[0]].start if path_to_add[0] else paths[
+            path_to_add[1]].end
+'''
 
 if __name__ == "__main__":
     # make a graph of the next available grid

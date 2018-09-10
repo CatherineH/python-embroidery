@@ -6,13 +6,15 @@ from block import Block
 from grid import Grid
 from os.path import join
 from pattern import Pattern
-from pattern_utils import de_densify, measure_density, pattern_to_svg
+from pattern_utils import de_densify, measure_density, pattern_to_svg, shorten_jumps
 from stitch import Stitch
 from svgutils import scan_lines, stack_paths, trace_image, sort_paths, overall_bbox, \
     get_color, get_stroke_width, make_continuous, write_debug, remove_close_paths, \
     path1_is_contained_in_path2, shorter_side, is_concave, draw_fill, posturize, \
     make_equidistant, perpendicular
 from configure import PLOTTING, MINIMUM_STITCH_DISTANCE, OUTPUT_DIRECTORY
+from svgwrite import rgb
+from svgwrite.shapes import Circle
 
 if PLOTTING:
     from scipy.spatial.qhull import Voronoi
@@ -34,7 +36,7 @@ from numpy import argmax, average, ceil
 from svgpathtools import svgdoc2paths, Line, Path
 
 from brother import BrotherEmbroideryFile, pattern_to_csv, upload
-from configure import MINIMUM_STITCH_LENGTH, maximum_stitch, DEBUG
+from configure import MINIMUM_STITCH_LENGTH, MAXIMUM_STITCH, DEBUG
 
 fill_method = "scan" #"grid"#"polygon"#"voronoi
 
@@ -79,6 +81,16 @@ class Digitizer(object):
         root_width = root.attributes.getNamedItem('width')
 
         viewbox = root.getAttribute('viewBox')
+        if viewbox:
+            lims = [float(i) for i in viewbox.split(" ")]
+            width = abs(lims[0] - lims[2])
+            height = abs(lims[1] - lims[3])
+        else:
+            # run through all the coordinates
+            bbox = overall_bbox(self.all_paths)
+            width = bbox[1] - bbox[0]
+            height = bbox[3] - bbox[2]
+
         if self.fill:
             self.all_paths, self.attributes = sort_paths(*stack_paths(*svgdoc2paths(doc)))
         else:
@@ -94,6 +106,9 @@ class Digitizer(object):
                 root_width = float(root_width.replace("px", "")) * 0.264583333
             elif root_width.find("pt") > 0:
                 root_width = float(root_width.replace("pt", "")) * 0.264583333
+            elif root_width.find("%") > 0:
+                # assume the viewbox is in pixels
+                root_width = float(root_width.replace("%", ""))*0.01 * width
             else:
                 root_width = float(root_width)
         size = 4*25.4
@@ -101,15 +116,6 @@ class Digitizer(object):
         if root_width:
             size = root_width
         size *= 10.0
-        if viewbox:
-            lims = [float(i) for i in viewbox.split(" ")]
-            width = abs(lims[0] - lims[2])
-            height = abs(lims[1] - lims[3])
-        else:
-            # run through all the coordinates
-            bbox = overall_bbox(self.all_paths)
-            width = bbox[1] - bbox[0]
-            height = bbox[3] - bbox[2]
 
         if width > height:
             self.scale = size / width
@@ -135,6 +141,7 @@ class Digitizer(object):
             self.all_paths, self.attributes = stack_paths(self.all_paths, self.attributes)
         for k, v in enumerate(self.attributes):
             paths = self.all_paths[k]
+
             # first, look for the color from the fill
             # if fill is false, change the attributes so that the fill is none but the
             # stroke is the fill (if not set)
@@ -219,7 +226,6 @@ class Digitizer(object):
         return new_paths
 
     def switch_color(self, new_color):
-        print(self.last_color, new_color, self.last_stitch)
         if self.last_color is None or self.last_color == new_color \
                 or self.last_stitch is None:
             return
@@ -233,6 +239,17 @@ class Digitizer(object):
         self.stitches = []
 
     def generate_straight_stroke(self, paths):
+        # sort the paths by the distance to the upper right corner
+        bbox = overall_bbox(paths)
+        write_debug("stroke_travel", [(Path(*paths), "none", (0, 0, 0)),
+                                      (Circle(center=(bbox[0], bbox[2]), r=1, fill=rgb(255, 0, 0)), "none", "none")])
+        '''
+        # make a graph out of the paths
+        path_graphs = {}
+        for i, path in paths:
+            distance = [min(abs()-abs()) for j in range(len(paths)) ]
+            path_graphs[i]
+        '''
         for i, path in enumerate(paths):
             if path.length() == 0:
                 continue
@@ -412,7 +429,7 @@ class Digitizer(object):
                         curr_pos.imag * self.scale,
                         color=self.fill_color)
             self.stitches.append(to)
-            blocks_covered = int(maximum_stitch / MINIMUM_STITCH_LENGTH)
+            blocks_covered = int(MAXIMUM_STITCH / MINIMUM_STITCH_LENGTH)
             while grid.grid_available(curr_pos):
                 for i in range(0, blocks_covered):
                     sign = 1.0 if going_east else -1.0
@@ -487,7 +504,7 @@ class Digitizer(object):
     def fill_voronoi(self, paths):
         points = []
         for path in paths:
-            num_stitches = 100.0 * path.length() / maximum_stitch
+            num_stitches = 100.0 * path.length() / MAXIMUM_STITCH
             ppoints = [path.point(i / num_stitches) for i in range(int(num_stitches))]
             for ppoint in ppoints:
                 points.append([ppoint.real, ppoint.imag])
@@ -590,6 +607,7 @@ if __name__ == "__main__":
         pass
     pattern = de_densify(dig.pattern)
     measure_density(pattern)
+    shorten_jumps(dig.pattern)
     pattern_to_csv(pattern, join(OUTPUT_DIRECTORY, filename + ".csv"))
     pattern_to_svg(pattern, join(OUTPUT_DIRECTORY, filename + ".svg"))
     pes_filename = join(OUTPUT_DIRECTORY, filename + ".pes")

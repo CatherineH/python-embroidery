@@ -28,6 +28,7 @@ except:
     CornerSegment = None
 
 from svgwrite.shapes import Circle
+from svgwrite.text import Text
 from configure import *
 
 if PLOTTING:
@@ -35,7 +36,15 @@ if PLOTTING:
 else:
     plt = None
 
+import svgpathtools
+
+from inspect import getsourcefile
+
+print(getsourcefile(svgpathtools))
+
 from svgpathtools import svgdoc2paths, Line, Path, CubicBezier, parse_path
+
+
 
 import svgwrite
 
@@ -163,8 +172,8 @@ def scan_lines(paths):
             debug_shapes.append([Circle(center=format_center(i+1), r=1, fill="blue")])
             line = Line(start=intersections[i], end=intersections[i+1])
             debug_shapes.append([line, "none", "green"])
-            if line.length() > maximum_stitch:
-                num_segments = ceil(line.length() / maximum_stitch)
+            if line.length() > MAXIMUM_STITCH:
+                num_segments = ceil(line.length() / MAXIMUM_STITCH)
                 for seg_i in range(int(num_segments)):
                     lines.append(Line(start=line.point(seg_i/num_segments),
                                       end=line.point((seg_i+1)/num_segments)))
@@ -346,7 +355,10 @@ def get_color(v, part="fill"):
     if not isinstance(v, dict):
         return [0, 0, 0]
     if "style" not in v:
+
         if part in v:
+            if isinstance(v[part], (list, tuple)) and len(v[part]) == 3:
+                return v[part]
             if v[part] in css2_names_to_hex:
                 return hex_to_rgb(css2_names_to_hex[v[part]])
             elif v[part][0] == "#":
@@ -400,6 +412,9 @@ def overall_bbox(paths):
 
 
 def sort_paths(paths, attributes):
+    # if there are only two paths, they don't need to be sorted
+    if len(paths) < 2:
+        return paths, attributes
     # sort paths by colors/ position.
     paths_by_color = defaultdict(list)
     for k, v in enumerate(attributes):
@@ -407,12 +422,18 @@ def sort_paths(paths, attributes):
         paths_by_color[stroke_color].append(k)
     output_paths = []
     output_attributes = []
+    current_jump = 0
+    debug_paths = []
     for color in paths_by_color:
         # paths_to_add is a list of indexes of paths in the paths input
         paths_to_add = paths_by_color[color]
 
         block_bbox = overall_bbox([paths[k] for k in paths_to_add])
-        start_location = block_bbox[0] + block_bbox[2] * 1j
+        start_location = block_bbox[0] + block_bbox[3] * 1j
+        debug_paths.append([Text(str(current_jump),
+                                 insert=(start_location.real, start_location.imag)),
+                            "black", "none"])
+        current_jump += 1
         paths_to_add = [(x, 0) for x in paths_to_add] + [(x, 1) for x in paths_to_add]
         while len(paths_to_add) > 0:
             # sort the paths by their distance to the top left corner of the block
@@ -428,10 +449,17 @@ def sort_paths(paths, attributes):
             paths_to_add = [p for p in paths_to_add if p[0] != path_to_add[0]]
             start_location = paths[path_to_add[0]].start if path_to_add[0] else paths[
                 path_to_add[1]].end
+            debug_paths.append([Text(str(current_jump),
+                                     insert=(start_location.real, start_location.imag), fill="black"),
+                                "black", "none"])
+            current_jump += 1
+            '''
             write_debug("sort", [[p, "none", "red"] for p in output_paths] + [[Circle(
                 center=(paths[p[0]].point(p[1]).real, paths[p[0]].point(p[1]).imag),
                 r=0.1), "gray", "none"] for p in paths_to_add] + [[Circle(
                 center=(start_location.real, start_location.imag), r=1), "blue", "none"]])
+            '''
+    write_debug("start_locations", debug_paths, override=True)
 
     # confirm that we haven't abandoned any paths
     assert len(output_paths) == len(paths)
@@ -470,9 +498,11 @@ def write_debug(partial, parts, override=False):
 
         params = {}
         if len(shape) > 2:
+            shape[2] = get_color(shape[2])
             if shape[2] is not None:
                 params["stroke"] = rgb_to_hex(shape[2])
         if len(shape) > 1:
+            shape[1] = get_color(shape[1])
             if shape[1] is not None:
                 params["fill"] = rgb_to_hex(shape[1])
         if isinstance(shape[0], Path):
@@ -484,6 +514,8 @@ def write_debug(partial, parts, override=False):
         elif isinstance(shape[0], svgwrite.shapes.Rect):
             debug_dwg.add(shape[0])
         elif isinstance(shape[0], svgwrite.shapes.Circle):
+            debug_dwg.add(shape[0])
+        elif isinstance(shape[0], Text):
             debug_dwg.add(shape[0])
         else:
             print("can't put shape", shape[0], " in debug file")

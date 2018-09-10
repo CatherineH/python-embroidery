@@ -16,3 +16,6 @@ class Stitch:
 
     def __repr__(self):
         return self.__str__()
+
+    def __sub__(self, other):
+        return self.complex - other.complex

@@ -12,7 +12,7 @@ class Block:
         self.color = nearest_color(color)
         if not isinstance(self.color, int):
             raise ValueError(
-                "block was instantiated with something that was not a color: %s %s" % (
+                "block was instantiated with something that was not a color: %s %s %s" % ( type(self.color),
                     self.color, color))
 
     @property

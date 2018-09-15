@@ -113,12 +113,23 @@ def make_equidistant(in_vertices, minimum_step):
     return new_vertices
 
 
-def scan_lines(paths):
+def split_subpaths(all_paths, attributes):
+    out_all_paths = []
+    out_attributes = []
+    for i, path in enumerate(all_paths):
+        sub_paths = path.continuous_subpaths()
+        out_all_paths += sub_paths
+        out_attributes += [attributes[i] for _ in sub_paths]
+    return out_all_paths, out_attributes
+
+
+def scan_lines(paths, current_y=None):
     bbox = overall_bbox(paths)
     lines = []
     fudge_factor = 0.01
     orientation = abs(bbox[3]-bbox[2]) > abs(bbox[1]-bbox[0])
-    current_y = bbox[2] if orientation else bbox[0]
+    if not current_y:
+        current_y = bbox[2] if orientation else bbox[0]
     max_pos = bbox[3] if orientation else bbox[1]
     debug_shapes = [[paths, "none", "gray"]]
 

@@ -1,6 +1,6 @@
 """A set of functionality to apply to completed patterns"""
 import csv
-from math import ceil
+from math import ceil, atan, sin, cos, pi
 from time import time
 
 from block import Block
@@ -19,14 +19,55 @@ if PLOTTING:
 else:
     plt = None
 
-
-# spiral around a point until you find the next available location
-class NextAvailableGrid(object):
-    def __init__(self, i, j):
+# zig zag out in a cone from the current point until you find the next available location
+class NextAvailableCone(object):
+    def __init__(self, i, j, last_i=None, last_j=None):
+        self.initial_step = i+j*1j
         self.i = i # i is the x coordinate
         self.j = j # j is the y coordinate
         self.direction = "left"
         self.stepsize = 1
+        if last_i is not None and last_j is not None:
+            if i == last_i:
+                self.angle = pi/2
+                self.angle *= -1 if j-last_j > 0 else 1
+            elif j == last_j:
+                self.angle = pi if last_i > i else 0
+            else:
+                self.angle = atan((j-last_j)/(i-last_i))
+        else:
+            self.angle = 0
+        self.di = 0
+        self.dj = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return self.next()
+
+    def next(self):
+        if self.di >= self.dj:
+            self.dj += 1
+            self.di = 0
+        else:
+            self.di = -self.di + -1 if self.di > 0 else 1
+
+        x = self.di*sin(self.angle) + self.dj*cos(self.angle)
+        y = self.di*cos(self.angle) - self.dj*sin(self.angle)
+
+        return self.i + int(x/self.stepsize), self.j + int(y/self.stepsize)
+
+
+# spiral around a point until you find the next available location
+class NextAvailableGrid(object):
+    def __init__(self, i, j, last_i=None, last_j=None):
+        self.initial_step = i+j*1j
+        self.i = i # i is the x coordinate
+        self.j = j # j is the y coordinate
+        self.direction = "left"
+        self.stepsize = 1
+        self.previous_stitch = None
         self.current_step = 0
 
     def __iter__(self):
@@ -193,6 +234,8 @@ def de_densify(pattern):
     # convert the density list of lists to a dict
     density = {i: {j: block for j, block in enumerate(density[i])}
                for i in range(len(density))}
+    last_i = None
+    last_j = None
     for block_i, block in enumerate(pattern.blocks):
         for stitch_i, stitch in enumerate(block.stitches):
             i = int((stitch.x - boundx[1]) / MINIMUM_STITCH_DISTANCE)
@@ -201,7 +244,7 @@ def de_densify(pattern):
             if density[j][i] < MAX_STITCHES:
                 density[j][i] += 1
                 continue
-            for next_i, next_j in NextAvailableGrid(i, j):
+            for next_i, next_j in NextAvailableCone(i, j, last_i=last_i, last_j=last_j):
                 if next_i >= x_bins or next_j >= y_bins:
                     continue
                 if density[next_j][next_i] >= MAX_STITCHES:
@@ -211,6 +254,8 @@ def de_densify(pattern):
                                                                boundy[1]
                 density[next_j][next_i] += 1
                 break
+            last_i = i
+            last_j = j
     return pattern
 
 

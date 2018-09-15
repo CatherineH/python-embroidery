@@ -11,7 +11,7 @@ from stitch import Stitch
 from svgutils import scan_lines, stack_paths, trace_image, sort_paths, overall_bbox, \
     get_color, get_stroke_width, make_continuous, write_debug, remove_close_paths, \
     path1_is_contained_in_path2, shorter_side, is_concave, draw_fill, posturize, \
-    make_equidistant, perpendicular
+    make_equidistant, perpendicular, split_subpaths
 from configure import PLOTTING, MINIMUM_STITCH_DISTANCE, OUTPUT_DIRECTORY
 from svgwrite import rgb
 from svgwrite.shapes import Circle
@@ -90,11 +90,11 @@ class Digitizer(object):
             bbox = overall_bbox(self.all_paths)
             width = bbox[1] - bbox[0]
             height = bbox[3] - bbox[2]
-
+        path_attributes = split_subpaths(*svgdoc2paths(doc))
         if self.fill:
-            self.all_paths, self.attributes = sort_paths(*stack_paths(*svgdoc2paths(doc)))
+            self.all_paths, self.attributes = sort_paths(*stack_paths(*path_attributes))
         else:
-            self.all_paths, self.attributes = sort_paths(*svgdoc2paths(doc))
+            self.all_paths, self.attributes = sort_paths(*path_attributes)
 
         if root_width is not None:
             root_width = root_width.value
@@ -189,6 +189,8 @@ class Digitizer(object):
                 self.add_block()
             if len(self.stitches) > 0:
                 self.last_color = self.stroke_color
+            # finally, move the stitches so that it is as close as possible to the next
+            # location
 
         if len(self.pattern.blocks) > 0 and len(self.pattern.blocks[-1].stitches) > 0:
             last_stitch = self.pattern.blocks[-1].stitches[-1]

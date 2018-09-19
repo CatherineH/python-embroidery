@@ -6,7 +6,8 @@ from block import Block
 from grid import Grid
 from os.path import join
 from pattern import Pattern
-from pattern_utils import de_densify, measure_density, pattern_to_svg, shorten_jumps
+from pattern_utils import de_densify, measure_density, pattern_to_svg, shorten_jumps, \
+    remove_short
 from stitch import Stitch
 from svgutils import scan_lines, stack_paths, trace_image, sort_paths, overall_bbox, \
     get_color, get_stroke_width, make_continuous, write_debug, remove_close_paths, \
@@ -199,31 +200,29 @@ class Digitizer(object):
                       color=self.pattern.blocks[-1].color))
 
     def generate_stroke_width(self, paths, stroke_width):
-        # paths = remove_close_paths(paths)
-        all_paths = Path(*paths).continuous_subpaths()
         new_paths = []
+
         if stroke_width / MINIMUM_STITCH_DISTANCE <= 1.:
             return paths
 
-        for paths in all_paths:
-            # how many times can the MINIMUM_STITCH_DISTANCE fit in the stroke width?
-            # if it is greater 1, duplicate the stitch offset by the minimum stitch
-            for i in range(0, int(stroke_width / MINIMUM_STITCH_DISTANCE)):
-                for path in paths:
-                    if i == 0:
-                        new_paths.append(path)
-                        continue
-                    # what is the broad angle of the path? (used to determine the
-                    # perpendicular angle to translate the path by)
-                    num_norm_samples = 10.0
-                    diff = average([path.normal(t / num_norm_samples)
-                                    for t in range(int(num_norm_samples))])
+        # how many times can the MINIMUM_STITCH_DISTANCE fit in the stroke width?
+        # if it is greater 1, duplicate the stitch offset by the minimum stitch
+        for i in range(0, int(stroke_width / MINIMUM_STITCH_DISTANCE)):
+            for path in paths:
+                if i == 0:
+                    new_paths.append(path)
+                    continue
+                # what is the broad angle of the path? (used to determine the
+                # perpendicular angle to translate the path by)
+                num_norm_samples = 10.0
+                diff = average([path.normal(t / num_norm_samples)
+                                for t in range(int(num_norm_samples))])
 
-                    diff *= -1 if i % 2 == 0 else 1
-                    diff *= ceil(i / 2.0) * MINIMUM_STITCH_DISTANCE / 2.0
+                diff *= -1 if i % 2 == 0 else 1
+                diff *= ceil(i / 2.0) * MINIMUM_STITCH_DISTANCE / 2.0
 
-                    # if i is odd, translate up/left, if even, translate down/right
-                    new_paths.append(path.translated(diff))
+                # if i is odd, translate up/left, if even, translate down/right
+                new_paths.append(path.translated(diff))
 
         return new_paths
 
@@ -245,35 +244,34 @@ class Digitizer(object):
         bbox = overall_bbox(paths)
         write_debug("stroke_travel", [(Path(*paths), "none", (0, 0, 0)),
                                       (Circle(center=(bbox[0], bbox[2]), r=1, fill=rgb(255, 0, 0)), "none", "none")])
-        '''
-        # make a graph out of the paths
-        path_graphs = {}
-        for i, path in paths:
-            distance = [min(abs()-abs()) for j in range(len(paths)) ]
-            path_graphs[i]
-        '''
+
+        # discretize the paths
+        points = []
         for i, path in enumerate(paths):
             if path.length() == 0:
                 continue
-            to = Stitch(["STITCH"], path.start.real * self.scale,
-                        path.start.imag * self.scale, color=self.stroke_color)
-            self.stitches.append(to)
+            points.append(path.start*self.scale)
             num_segments = ceil(path.length() / MINIMUM_STITCH_LENGTH)
             for seg_i in range(int(num_segments + 1)):
-                control_stitch = Stitch(["STITCH"],
-                                        path.point(seg_i / num_segments).real * self.scale,
-                                        path.point(seg_i / num_segments).imag * self.scale,
-                                        color=self.stroke_color)
-                self.stitches.append(control_stitch)
+                points.append(path.point(seg_i / num_segments) * self.scale)
             # if the next stitch doesn't start at the end of this stitch, add that one as
             # well
-            end_stitch = Stitch(["STITCH"], path.end.real * self.scale,
-                                path.end.imag * self.scale, color=self.stroke_color)
+            end_stitch = path.end * self.scale
             if i != len(paths) - 1:
                 if path.end != paths[i + 1].start:
-                    self.stitches.append(end_stitch)
+                    points.append(end_stitch)
             else:
-                self.stitches.append(end_stitch)
+                points.append(end_stitch)
+        if len(points) == 0:
+            return
+        # find the point closest to the last stitch
+        last_stitch = self.last_stitch.x+self.last_stitch.y*1j
+        closest = sorted([i for i in range(len(points))], key=lambda dist: abs(points[i]-last_stitch))[0]
+        points = points[closest:]+points[:closest]
+
+        for point in points:
+            to = Stitch(["STITCH"], point.real, point.imag, color=self.stroke_color)
+            self.stitches.append(to)
 
     def fill_polygon(self, paths):
         rotated = 0
@@ -607,7 +605,8 @@ if __name__ == "__main__":
         measure_density(dig.pattern)
     except ValueError as e:
         pass
-    pattern = de_densify(dig.pattern)
+    pattern = remove_short(dig.pattern)
+    pattern = de_densify(pattern)
     measure_density(pattern)
     shorten_jumps(dig.pattern)
     pattern_to_csv(pattern, join(OUTPUT_DIRECTORY, filename + ".csv"))

@@ -229,6 +229,26 @@ def plot_density(density, pattern):
 MAX_STITCHES = 3
 
 
+def remove_short(pattern):
+    # for the stitches in the pattern, if they are shorter than the minimum stitch
+    # distance, remove them.
+
+    block_i = 0
+    while block_i < len(pattern.blocks):
+        last_stitch = None
+        stitch_i = 0
+        while stitch_i < len(pattern.blocks[block_i].stitches):
+            if last_stitch:
+                if abs(last_stitch-pattern.blocks[block_i].stitches[stitch_i]) \
+                        < MINIMUM_STITCH_DISTANCE*1.5:
+                    del pattern.blocks[block_i].stitches[stitch_i]
+                    continue
+            last_stitch = pattern.blocks[block_i].stitches[stitch_i]
+            stitch_i += 1
+        block_i += 1
+    return pattern
+
+
 def de_densify(pattern):
     density, boundx, boundy, x_bins, y_bins = initialize_grid(pattern)
     # convert the density list of lists to a dict
@@ -244,7 +264,7 @@ def de_densify(pattern):
             if density[j][i] < MAX_STITCHES:
                 density[j][i] += 1
                 continue
-            for next_i, next_j in NextAvailableCone(i, j, last_i=last_i, last_j=last_j):
+            for next_i, next_j in NextAvailableGrid(i, j, last_i=last_i, last_j=last_j):
                 if next_i >= x_bins or next_j >= y_bins:
                     continue
                 if density[next_j][next_i] >= MAX_STITCHES:

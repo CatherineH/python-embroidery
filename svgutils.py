@@ -347,12 +347,24 @@ def get_stroke_width(v, scale):
             stroke_width = style_parts["stroke-width"]
     if stroke_width is None:
         return MINIMUM_STITCH_LENGTH
-    try:
-        stroke_width = float(stroke_width)
-    except TypeError:
-        raise NotImplementedError("conversion from {} to stroke width not yet "
-                                  "supported".format(stroke_width))
+    stroke_width =  get_pixel_from_string(stroke_width)
     return scale*stroke_width
+
+
+def get_pixel_from_string(_input, width=100):
+    if _input.find("mm") > 0:
+        return float(_input.replace("mm", ""))
+    elif _input.find("in") > 0:
+        return float(_input.replace("in", "")) * 25.4
+    elif _input.find("px") > 0:
+        return float(_input.replace("px", "")) * 0.264583333
+    elif _input.find("pt") > 0:
+        return float(_input.replace("pt", "")) * 0.264583333
+    elif _input.find("%") > 0:
+        # assume the viewbox is in pixels
+        return float(_input.replace("%", "")) * 0.01 * width
+    else:
+        return float(_input)
 
 
 def get_color(v, part="fill"):
@@ -616,11 +628,15 @@ def shape_to_path(shape):
 
 
 def path_difference_shapely(path1, path2):
-    poly1 = path_to_poly(path1)
-    if not poly1.is_valid:
+    try:
+        poly1 = path_to_poly(path1)
+    except (IndexError, ValueError) as e:
+        return path1
+    if not poly1.is_valid or not path2.closed:
         # output the shape to a debug file
         # write_debug("invalid1", [[shape_to_path(poly1), "black", "none"]])
         return path1
+
     poly2 = path_to_poly(path2)
     if not poly2.is_valid:
         # output the shape to a debug file

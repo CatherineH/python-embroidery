@@ -12,7 +12,7 @@ from stitch import Stitch
 from svgutils import scan_lines, stack_paths, trace_image, sort_paths, overall_bbox, \
     get_color, get_stroke_width, make_continuous, write_debug, remove_close_paths, \
     path1_is_contained_in_path2, shorter_side, is_concave, draw_fill, posturize, \
-    make_equidistant, perpendicular, split_subpaths
+    make_equidistant, perpendicular, split_subpaths, get_pixel_from_string
 from configure import PLOTTING, MINIMUM_STITCH_DISTANCE, OUTPUT_DIRECTORY
 from svgwrite import rgb
 from svgwrite.shapes import Circle
@@ -98,20 +98,8 @@ class Digitizer(object):
             self.all_paths, self.attributes = sort_paths(*path_attributes)
 
         if root_width is not None:
-            root_width = root_width.value
-            if root_width.find("mm") > 0:
-                root_width = float(root_width.replace("mm", ""))
-            elif root_width.find("in") > 0:
-                root_width = float(root_width.replace("in", "")) * 25.4
-            elif root_width.find("px") > 0:
-                root_width = float(root_width.replace("px", "")) * 0.264583333
-            elif root_width.find("pt") > 0:
-                root_width = float(root_width.replace("pt", "")) * 0.264583333
-            elif root_width.find("%") > 0:
-                # assume the viewbox is in pixels
-                root_width = float(root_width.replace("%", ""))*0.01 * width
-            else:
-                root_width = float(root_width)
+
+            root_width = get_pixel_from_string(root_width.value, width)
         size = 4*25.4
         # The maximum size is 4 inches - multiplied by 10 for scaling
         if root_width:
@@ -127,6 +115,7 @@ class Digitizer(object):
     def add_block(self, clear=True):
         if len(self.stitches) == 0:
             print("got no stitches in add block!")
+            return
         if self.last_color is not None:
             block = Block(stitches=self.stitches, color=self.last_color)
             self.pattern.add_block(block)
@@ -265,7 +254,10 @@ class Digitizer(object):
         if len(points) == 0:
             return
         # find the point closest to the last stitch
-        last_stitch = self.last_stitch.x+self.last_stitch.y*1j
+        if not self.last_stitch:
+            last_stitch = points[0]
+        else:
+            last_stitch = self.last_stitch.x+self.last_stitch.y*1j
         closest = sorted([i for i in range(len(points))], key=lambda dist: abs(points[i]-last_stitch))[0]
         points = points[closest:]+points[:closest]
 

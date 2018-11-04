@@ -105,7 +105,7 @@ def pattern_to_svg(pattern, filename):
         output_file = filename
     paths = []
     colors = []
-    scale_factor = 0.1 # scale from cm to mm from pes
+    scale_factor = 0.1  # scale from cm to mm from pes
     for block in pattern.blocks:
         block_paths = []
         last_stitch = None
@@ -124,11 +124,12 @@ def pattern_to_svg(pattern, filename):
             paths.append(Path(*block_paths))
     dims = overall_bbox(paths)
     mindim = max(dims[1]-dims[0], dims[3]-dims[2])
+
     print("in pattern to svg, overallbbox", overall_bbox(paths))
     if len(paths) == 0:
         print("warning: pattern did not generate stitches")
         return
-    wsvg(paths, colors, filename = output_file, mindim=mindim)
+    wsvg(paths, colors, margin_size=0, filename=output_file, mindim=mindim)
 
 
 def csv_to_pattern(filename):
